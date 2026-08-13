@@ -1,0 +1,12 @@
+{
+  "name": "portafoglio-forex",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Dashboard personale dei conti MT4 via API Myfxbook",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node engine.js"
+  }
+}

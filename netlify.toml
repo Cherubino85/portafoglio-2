@@ -1,0 +1,28 @@
+# Configurazione Netlify della dashboard.
+# Nessun passo di build: si pubblica public/ e girano le functions in netlify/functions.
+
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+  command = ""
+
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["engine.js", "myfxbook.js", "data.js"]
+
+[[redirects]]
+  from = "/api/home"
+  to = "/.netlify/functions/home"
+  status = 200
+
+[[redirects]]
+  from = "/api/account"
+  to = "/.netlify/functions/account"
+  status = 200
+
+# Il service worker non deve mai essere servito da cache di edge:
+# e' il file che decide come si comporta tutto il resto.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
