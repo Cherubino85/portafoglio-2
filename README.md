@@ -3,55 +3,58 @@
 I conti MT4 aggregati via API Myfxbook. PWA installabile, funziona offline
 sull'ultimo dato scaricato.
 
-- Rendimento combinato in percentuale, neutrale al cambio
-- Curva del saldo, curva equity (flottante incluso) e swap incassato
-- Guadagno mensile per conto, convertito in euro ai cambi BCE
-- Drawdown massimo, filtro per intervallo di date
-- Pagina di dettaglio per singolo conto
-- Capitale occultabile con un tocco
+## Struttura piatta, di proposito
+
+Tutto sta alla radice del repository. C'e' **una sola cartella**, `funzioni`,
+con **un solo file** dentro.
+
+Il motivo e' pratico: il caricamento web di GitHub perde la struttura delle
+cartelle quando si trascina, e i file finiscono tutti alla radice. Con questa
+struttura non c'e' niente da perdere. La cartella `funzioni` si crea scrivendone
+il nome nel campo del file, non trascinandola.
+
+Conseguenza da sapere: con `publish = "."` Netlify pubblica anche i sorgenti
+(`engine.js`, `myfxbook.js`, `data.js`). Non contengono credenziali — quelle
+stanno nelle variabili d'ambiente — ma sono leggibili da chi conosce
+l'indirizzo. Quando la dashboard diventera' un prodotto, si sposta la parte
+pubblica in una sottocartella e si cambia `publish`.
+
+## File
+
+```
+index.html            la PWA
+sw.js                 service worker
+manifest.webmanifest  installazione
+icon-192.png icon-512.png mask-512.png
+engine.js             calcoli: rendimenti, attribuzione, swap, drawdown
+myfxbook.js           client API Myfxbook + normalizzazione + cambi BCE
+data.js               dati reali o dimostrativi, cache 5 minuti
+server.js             server locale di sviluppo
+package.json  netlify.toml  .env.example
+funzioni/api.js       l'endpoint /api/*
+```
 
 ## Prova in locale
 ```
 node server.js     # http://localhost:3000
-node engine.js     # collaudo rapido del motore di calcolo
+node engine.js     # collaudo del motore di calcolo
 ```
 Senza credenziali parte con dati dimostrativi.
 
-## Struttura
-```
-engine.js                 calcoli: rendimenti, attribuzione, swap, drawdown
-myfxbook.js               client API Myfxbook + normalizzazione + cambi BCE
-data.js                   sceglie fra dati reali e dimostrativi, con cache 5 min
-server.js                 server locale di sviluppo
-netlify.toml              instrada /api/* alle functions
-netlify/functions/        gli stessi endpoint per il deploy
-public/                   la PWA: index.html, sw.js, manifest, icone
-```
-
 ## Deploy su Netlify
-1. Repository GitHub collegato: **Add new site -> Import from Git**.
-2. Non toccare le impostazioni: arrivano da `netlify.toml`
-   (publish `public`, functions `netlify/functions`, build command vuoto).
-3. **Site configuration -> Environment variables**:
-   - `MYFXBOOK_EMAIL`
-   - `MYFXBOOK_PASSWORD`
-4. **Deploys -> Trigger deploy -> Deploy site** per rigenerare con le credenziali.
+1. **Add new site -> Import an existing project**, scegli il repository.
+2. Non modificare niente nella schermata di configurazione: publish, functions
+   e build command arrivano da `netlify.toml`.
+3. **Site configuration -> Environment variables**: `MYFXBOOK_EMAIL` e
+   `MYFXBOOK_PASSWORD`.
+4. **Deploys -> Trigger deploy -> Deploy site**.
 
-## Due punti che sono costati tempo e che qui restano risolti
+## Due punti che restano risolti
 - `get-data-daily` restituisce un **array di array**: va appiattito.
-- `floatingPL` dell'API e' quasi sempre 0: l'equity **non** si ricostruisce come
-  balance + floatingPL, si usa il campo **`growthEquity`** che Myfxbook fornisce
-  gia' calcolato. E' la loro linea "Equity Growth".
+- `floatingPL` e' quasi sempre 0: l'equity si prende da **`growthEquity`**,
+  non da `balance + floatingPL`.
 
-## Convivenza con altre app sullo stesso dominio
-Le cache del browser sono condivise da tutto il dominio. Il service worker qui
-cancella **solo** le cache che iniziano per `portafoglio-` e ignora qualsiasi
-richiesta sotto `/simulatore`. Anche le chiavi di memoria locale hanno prefisso
-proprio (`pf:`). Senza queste tre accortezze due PWA sullo stesso indirizzo si
-azzerano a vicenda.
-
-## Un solo repository, una sola piattaforma
-Questo repository deve essere collegato a **una piattaforma di deploy soltanto**.
-Se resta collegato anche a un'altra (Cloudflare Workers, Pages, Vercel), quella
-pubblica gli stessi file senza le Netlify Functions: la dashboard appare ma
-`/api/home` risponde 404 e nessun dato compare.
+## Convivenza con altre app
+Cache con prefisso `portafoglio-` (cancella solo le proprie), chiavi locali con
+prefisso `pf:`, e il service worker ignora `/simulatore`. Il simulatore va
+comunque tenuto su un sito suo.

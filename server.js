@@ -1,6 +1,5 @@
 'use strict';
-/* server.js — server locale di sviluppo. In produzione non serve:
- * su Netlify gli stessi endpoint girano come functions. */
+/* server.js — server locale di sviluppo. In produzione non serve. */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -14,25 +13,24 @@ const TIPI = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; chars
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const q = Object.fromEntries(url.searchParams);
-  const json = (code, corpo) => {
-    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store' });
-    res.end(JSON.stringify(corpo));
-  };
-  try {
-    if (url.pathname === '/api/home')
-      return json(200, await dati.home({ from: q.from, to: q.to, force: q.force === '1' }));
-    if (url.pathname === '/api/account')
-      return json(200, await dati.account(q.id, { from: q.from, to: q.to, force: q.force === '1' }));
-  } catch (e) {
-    return json(e.status || 500, { errore: e.message });
+  if (url.pathname.startsWith('/api/')) {
+    try {
+      const out = q.id
+        ? await dati.account(q.id, { from:q.from, to:q.to, force:q.force==='1' })
+        : await dati.home({ from:q.from, to:q.to, force:q.force==='1' });
+      res.writeHead(200, {'content-type':'application/json; charset=utf-8','cache-control':'no-store'});
+      return res.end(JSON.stringify(out));
+    } catch (e) {
+      res.writeHead(e.status || 500, {'content-type':'application/json; charset=utf-8'});
+      return res.end(JSON.stringify({ errore: e.message }));
+    }
   }
-  // file statici da public/
-  let p = path.join(__dirname, 'public', url.pathname === '/' ? 'index.html' : url.pathname);
-  if (!p.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403); return res.end(); }
-  fs.readFile(p, (err, buf) => {
+  const nome = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+  const est = path.extname(nome);
+  if (!TIPI[est] || nome.includes('..')) { res.writeHead(404); return res.end('Non trovato'); }
+  fs.readFile(path.join(__dirname, nome), (err, buf) => {
     if (err) { res.writeHead(404, {'content-type':'text/plain'}); return res.end('Non trovato'); }
-    res.writeHead(200, { 'content-type': TIPI[path.extname(p)] || 'application/octet-stream' });
+    res.writeHead(200, { 'content-type': TIPI[est] });
     res.end(buf);
   });
 });
