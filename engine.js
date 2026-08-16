@@ -1,20 +1,34 @@
 'use strict';
 /* engine.js — motore di calcolo del portafoglio.
  *
- * Non parla con la rete e non conosce Myfxbook: riceve conti gia' normalizzati
- * (vedi myfxbook.js) e restituisce quello che la dashboard disegna.
+ * Principi, perche' qui e' facile sbagliare in modo invisibile:
  *
- * Convenzioni:
- * - i rendimenti giornalieri sono in forma decimale (0.012 = +1,2%)
- * - i rendimenti sono calcolati NELLA VALUTA DEL CONTO: sono quindi
- *   neutrali al cambio (il cambio muove il valore in EUR, non la performance)
- * - gli importi in valuta sono convertiti in EUR solo per i pesi e i totali
+ * 1. VERSAMENTI E PRELIEVI NON SONO RENDIMENTO. Il rendimento del giorno si
+ *    ricava dal profit, non dalla variazione del saldo: un bonifico muove il
+ *    saldo e non c'entra nulla con la performance.
+ * 2. I PESI DEI CONTI VENGONO DAI SALDI DI QUEL GIORNO, non dedotti a ritroso
+ *    dall'equity di oggi. Con conti che ricevono versamenti, dedurli a ritroso
+ *    da' pesi sbagliati e quindi un rendimento combinato sbagliato.
+ * 3. SALDO ED EQUITY STANNO SULLA STESSA BASE. La curva equity non e' una
+ *    curva indipendente: e' la curva del saldo moltiplicata per il rapporto
+ *    equity/saldo dichiarato da Myfxbook. Cosi' il loro distacco e' esattamente
+ *    quello vero, e l'equity sta sopra il saldo solo quando il flottante e'
+ *    davvero positivo.
+ * 4. LO SWAP E' UN RENDIMENTO, non un importo appiccicato a un grafico di
+ *    percentuali: si compone come gli altri, sulla stessa base. La linea
+ *    risponde a "di questo +35%, quanto e' swap".
+ *
+ * I rendimenti sono calcolati nella valuta del conto: sono neutrali al cambio.
+ * Gli importi si convertono in euro solo per pesare e sommare.
  */
 
 const MESI = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu',
               'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
 
-/* ---------- utilita' ---------- */
+const round2 = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+};
 
 function inRange(date, from, to) {
   if (from && date < from) return false;
@@ -22,15 +36,6 @@ function inRange(date, from, to) {
   return true;
 }
 
-/** Serie cumulativa composta a partire dai rendimenti di passo. */
-function compound(rets) {
-  const out = [];
-  let acc = 1;
-  for (const r of rets) { acc *= (1 + (Number(r) || 0)); out.push(acc); }
-  return out;
-}
-
-/** Unione ordinata delle date di tutti i conti, filtrata sull'intervallo. */
 function unionDates(accounts, from, to) {
   const set = new Set();
   for (const a of accounts)
@@ -39,48 +44,41 @@ function unionDates(accounts, from, to) {
   return [...set].sort();
 }
 
-/** Mappa data -> punto, per accesso diretto. */
-function byDate(series) {
-  const m = new Map();
-  for (const p of series) m.set(p.date, p);
-  return m;
+function compound(rets) {
+  const out = [];
+  let acc = 1;
+  for (const r of rets) { acc *= (1 + (Number(r) || 0)); out.push(acc); }
+  return out;
 }
 
-/* ---------- costruzione della curva di un conto sull'asse comune ---------- */
-
 /**
- * Riporta un conto sull'asse delle date comune.
- * Nei giorni in cui il conto non ha rilevazioni il rendimento e' 0
- * (posizione ferma), cosi' la curva non si spezza.
+ * Porta un conto sull'asse delle date comune.
+ * Il saldo si trascina in avanti (l'ultimo noto), i rendimenti mancanti sono
+ * zero: un giorno senza rilevazione e' un giorno fermo, non un buco.
  */
-function curveOn(dates, account) {
-  const m = byDate(account.series);
-  const bal = [], eq = [], swap = [];
+function suAsse(dates, account) {
+  const m = new Map(account.series.map(p => [p.date, p]));
+  const bal = [], ret = [], swap = [], ge = [], gb = [];
+  let ultimoBal = 0, ultimoGe = null, ultimoGb = null;
   for (const d of dates) {
     const p = m.get(d);
-    bal.push(p ? p.balanceRet : 0);
-    eq.push(p ? p.equityRet : 0);
+    if (p) {
+      ultimoBal = p.balance || ultimoBal;
+      if (p.ge != null) ultimoGe = p.ge;
+      if (p.gb != null) ultimoGb = p.gb;
+    }
+    bal.push(ultimoBal);
+    ret.push(p ? p.balanceRet : 0);
     swap.push(p ? (p.swap || 0) : 0);
+    ge.push(ultimoGe);
+    gb.push(ultimoGb);
   }
-  return { balance: compound(bal), equity: compound(eq), swapStep: swap };
+  return { bal, ret, swap, ge, gb, cum: compound(ret) };
 }
 
-/* ---------- aggregazione ---------- */
-
 /**
- * buildHome(accounts, opts)
- *
- * Combina i conti in un unico portafoglio. Il metodo e' quello di un
- * portafoglio buy-and-hold: ogni conto entra con il capitale che aveva
- * all'INIZIO della finestra e da li' compone il proprio rendimento.
- *
- *   V(t) = somma_i [ capitaleIniziale_i(EUR) * cumulato_i(t) ]
- *   rendimento(t) = V(t) / V(0) - 1
- *
- * Il capitale iniziale si ricava a ritroso dall'equity attuale:
- *   iniziale_i = attuale_i / cumulato_i(fine)
- *
- * opts: { from, to, rates } — rates: { CHF: 0.94, USD: 1.08, ... } (1 EUR = x valuta)
+ * buildHome(accounts, { from, to, rates })
+ * rates: { CHF: 0.94, ... } cioe' 1 EUR = x valuta.
  */
 function buildHome(accounts, opts = {}) {
   const { from, to, rates = {} } = opts;
@@ -91,49 +89,61 @@ function buildHome(accounts, opts = {}) {
   };
 
   const dates = unionDates(accounts, from, to);
-  if (!dates.length) {
-    return {
-      labels: [], balancePct: [], equityPct: [], swapPct: [],
-      gainPct: 0, equityGainPct: 0, swapPct_finale: 0, swapEur: 0,
-      capitaleEur: 0, maxDrawdownPct: 0, monthly: [], accounts: [],
-      from: from || null, to: to || null, vuoto: true
-    };
+  if (!dates.length) return vuoto(from, to);
+
+  const parti = accounts.map(a => ({ a, c: suAsse(dates, a) }));
+
+  /* ---- curva del saldo: rendimenti pesati sui saldi del giorno prima ---- */
+  const rComb = [], rSwap = [];
+  for (let i = 0; i < dates.length; i++) {
+    const j = i > 0 ? i - 1 : 0;
+    const pesi = parti.map(p => toEur(p.c.bal[j], p.a.currency));
+    const tot = pesi.reduce((x, y) => x + y, 0);
+    if (tot <= 0) { rComb.push(0); rSwap.push(0); continue; }
+    let r = 0, s = 0;
+    parti.forEach((p, k) => {
+      const w = pesi[k] / tot;
+      r += w * p.c.ret[i];
+      // lo swap come rendimento: quanto ha reso, non quanti euro erano
+      const base = p.c.bal[j];
+      s += w * (base > 0 ? p.c.swap[i] / base : 0);
+    });
+    rComb.push(r); rSwap.push(s);
   }
+  const curvaSaldo = compound(rComb);
+  const curvaSwap = compound(rSwap);
 
-  const parts = accounts.map(a => {
-    const c = curveOn(dates, a);
-    const finale = c.balance[c.balance.length - 1] || 1;
-    const finaleEq = c.equity[c.equity.length - 1] || 1;
-    const attualeEur = toEur(a.equity != null ? a.equity : a.balance, a.currency);
-    // capitale a inizio finestra, dedotto a ritroso dal cumulato
-    const inizialeEur = finale > 0.0001 ? attualeEur / finale : attualeEur;
-    return { a, c, inizialeEur, finale, finaleEq };
-  });
-
-  const V0 = parts.reduce((s, p) => s + p.inizialeEur, 0) || 1;
+  /* ---- rapporto equity/saldo, dalle cumulate dichiarate da Myfxbook ---- */
+  const rapporto = [];
+  for (let i = 0; i < dates.length; i++) {
+    let eq = 0, bal = 0;
+    parti.forEach(p => {
+      const b = toEur(p.c.bal[i], p.a.currency);
+      bal += b;
+      const ge = p.c.ge[i];
+      // se Myfxbook non dichiara la crescita del saldo, si usa quella composta
+      // qui: entrambe sono al netto di versamenti, quindi stessa base
+      const gb = p.c.gb[i] != null ? p.c.gb[i] : (p.c.cum[i] - 1) * 100;
+      const k = (ge != null && (1 + gb / 100) > 0.0001)
+        ? (1 + ge / 100) / (1 + gb / 100) : 1;
+      eq += b * k;
+    });
+    rapporto.push(bal > 0 ? eq / bal : 1);
+  }
+  const rap0 = rapporto[0] || 1;
 
   const balancePct = [], equityPct = [], swapPct = [];
-  let swapCum = 0;
   for (let i = 0; i < dates.length; i++) {
-    let vb = 0, ve = 0, sw = 0;
-    for (const p of parts) {
-      vb += p.inizialeEur * p.c.balance[i];
-      ve += p.inizialeEur * p.c.equity[i];
-      sw += toEur(p.c.swapStep[i], p.a.currency);
-    }
-    swapCum += sw;
-    balancePct.push((vb / V0 - 1) * 100);
-    equityPct.push((ve / V0 - 1) * 100);
-    swapPct.push((swapCum / V0) * 100);
+    balancePct.push((curvaSaldo[i] - 1) * 100);
+    equityPct.push((curvaSaldo[i] * (rapporto[i] / rap0) - 1) * 100);
+    swapPct.push((curvaSwap[i] - 1) * 100);
   }
 
-  /* Drawdown: sulla curva equity combinata.
-   * Con un conto solo si usa il dato dichiarato da Myfxbook, che tiene conto
-   * anche dell'intraday che la serie giornaliera non vede. */
+  /* ---- drawdown sulla curva equity ---- */
   let maxDrawdownPct;
-  if (accounts.length === 1 && Number.isFinite(Number(accounts[0].drawdownPct))
-      && !from && !to) {
-    maxDrawdownPct = Number(accounts[0].drawdownPct);
+  if (accounts.length === 1 && !from && !to &&
+      Number.isFinite(Number(accounts[0].drawdownPct)) && Number(accounts[0].drawdownPct) > 0) {
+    maxDrawdownPct = Number(accounts[0].drawdownPct);   // il dichiarato vede anche l'intraday
   } else {
     let picco = -Infinity, dd = 0;
     for (const v of equityPct) {
@@ -144,98 +154,147 @@ function buildHome(accounts, opts = {}) {
     maxDrawdownPct = dd;
   }
 
-  /* Guadagno mensile.
-   * Due letture insieme: la percentuale del mese sul portafoglio combinato
-   * (e' quella che Myfxbook mostra in Monthly Analytics) e il contributo in
-   * euro di ciascun conto, per sapere da dove e' arrivata. */
-  const mesi = [];
-  const indexOfMonth = new Map();
+  /* ---- mesi: percentuale del mese sulla curva combinata ---- */
+  const indici = new Map();
   dates.forEach((d, i) => {
     const k = d.slice(0, 7);
-    if (!indexOfMonth.has(k)) indexOfMonth.set(k, { first: i, last: i });
-    else indexOfMonth.get(k).last = i;
+    if (!indici.has(k)) indici.set(k, { first: i, last: i });
+    else indici.get(k).last = i;
   });
-  for (const [k, { first, last }] of indexOfMonth) {
+  const monthly = [];
+  for (const [k, { first, last }] of indici) {
+    const prima = first > 0 ? curvaSaldo[first - 1] : 1;
+    const dopo = curvaSaldo[last];
     const riga = { mese: k, anno: Number(k.slice(0, 4)),
-                   etichetta: etichettaMese(k), etichettaBreve: MESI[Number(k.slice(5, 7)) - 1],
-                   conti: {}, totale: 0, pct: 0 };
-    let prima = 0, dopo = 0;
-    for (const p of parts) {
-      const a = first > 0 ? p.c.balance[first - 1] : p.c.balance[first];
-      const b = p.c.balance[last];
-      const g = p.inizialeEur * (b - a);
+      etichetta: `${MESI[Number(k.slice(5, 7)) - 1]} ${k.slice(2, 4)}`,
+      etichettaBreve: MESI[Number(k.slice(5, 7)) - 1],
+      pct: prima > 0 ? round2((dopo / prima - 1) * 100) : 0,
+      conti: {}, totale: 0 };
+    parti.forEach(p => {
+      const a = p.c.cum[first > 0 ? first - 1 : first];
+      const b = p.c.cum[last];
+      const capitale = toEur(p.c.bal[first > 0 ? first - 1 : first], p.a.currency);
+      const g = a > 0 ? capitale * (b / a - 1) : 0;
       riga.conti[p.a.name] = round2(g);
       riga.totale += g;
-      prima += p.inizialeEur * a;
-      dopo += p.inizialeEur * b;
-    }
+    });
     riga.totale = round2(riga.totale);
-    riga.pct = prima > 0 ? round2((dopo / prima - 1) * 100) : 0;
-    mesi.push(riga);
+    monthly.push(riga);
   }
-  mesi.sort((a, b) => a.mese < b.mese ? -1 : 1);
-  const anni = [...new Set(mesi.map(m => m.anno))].sort();
+  monthly.sort((a, b) => a.mese < b.mese ? -1 : 1);
 
-  /* Somme delle statistiche dichiarate da Myfxbook, convertite in euro.
-     Non sono ricalcolate: sono le loro, sommate. */
-  const somma = (campo) => round2(parts.reduce(
+  /* ---- somme delle statistiche dichiarate da Myfxbook ---- */
+  const somma = (campo) => round2(parti.reduce(
     (t, p) => t + toEur(Number(p.a[campo]) || 0, p.a.currency), 0));
   const statistiche = {
-    profitto: somma('profit'),
-    swap: somma('interest'),
-    versamenti: somma('deposits'),
-    prelievi: somma('withdrawals'),
-    saldo: somma('balance'),
-    equity: somma('equity')
+    profitto: somma('profit'), swap: somma('interest'),
+    versamenti: somma('deposits'), prelievi: somma('withdrawals'),
+    saldo: somma('balance'), equity: somma('equity'),
+    flottante: somma('flottante')
   };
+  statistiche.flottantePct = statistiche.saldo > 0
+    ? round2(statistiche.flottante / statistiche.saldo * 100) : 0;
 
-  const capitaleEur = parts.reduce(
-    (s, p) => s + toEur(p.a.equity != null ? p.a.equity : p.a.balance, p.a.currency), 0);
+  // swap sulle posizioni aperte: null se anche un solo conto non l'ha fornito
+  const senzaAperte = parti.some(p => p.a.swapAperto == null);
+  statistiche.swapAperto = senzaAperte ? null : somma('swapAperto');
+  statistiche.swapApertoPct = (senzaAperte || !(statistiche.saldo > 0)) ? null
+    : round2(statistiche.swapAperto / statistiche.saldo * 100);
+  statistiche.posizioniAperte = senzaAperte ? null
+    : parti.reduce((t, p) => t + (Number(p.a.quanteAperte) || 0), 0);
+
+  const ultimo = dates.length - 1;
+  const swapEur = parti.reduce((t, p) =>
+    t + toEur(p.c.swap.reduce((x, y) => x + y, 0), p.a.currency), 0);
+
+  /* ---- controlli di coerenza, esposti invece che nascosti ---- */
+  const rapportoFinale = rapporto[ultimo];
+  const dichiarato = statistiche.saldo > 0 ? statistiche.equity / statistiche.saldo : null;
+  const controlli = {
+    rapportoEquitySaldo: round2(rapportoFinale * 100),
+    rapportoDichiarato: dichiarato != null ? round2(dichiarato * 100) : null,
+    scarto: dichiarato != null ? round2((rapportoFinale - dichiarato) * 100) : null,
+    baseCrescitaSaldo: parti.every(p => p.c.gb[ultimo] != null)
+      ? 'dichiarata da Myfxbook' : 'composta dai rendimenti giornalieri',
+    swapDaOperazioniChiuse: round2(swapEur),
+    swapDichiarato: statistiche.swap,
+    /* Il controllo che conta: il rendimento composto qui deve coincidere con
+       il Gain dichiarato da Myfxbook. Se scarta, la curva del saldo non e'
+       sulla loro stessa base e va corretta, non giustificata. */
+    perConto: parti.map(p => ({
+      conto: p.a.name,
+      calcolato: round2((p.c.cum[ultimo] - 1) * 100),
+      dichiarato: round2(Number(p.a.gainPct) || 0),
+      scarto: round2((p.c.cum[ultimo] - 1) * 100 - (Number(p.a.gainPct) || 0)),
+      finestraIntera: !from && !to
+    }))
+  };
 
   return {
     labels: dates,
     balancePct: balancePct.map(round2),
     equityPct: equityPct.map(round2),
     swapPct: swapPct.map(round2),
-    gainPct: round2(balancePct[balancePct.length - 1]),
-    equityGainPct: round2(equityPct[equityPct.length - 1]),
-    swapPctFinale: round2(swapPct[swapPct.length - 1]),
-    swapEur: round2(swapCum),
-    capitaleEur: round2(capitaleEur),
+    gainPct: round2(balancePct[ultimo]),
+    equityGainPct: round2(equityPct[ultimo]),
+    swapPctFinale: round2(swapPct[ultimo]),
+    swapEur: round2(swapEur),
+    capitaleEur: round2(parti.reduce((t, p) =>
+      t + toEur(p.a.equity != null ? p.a.equity : p.a.balance, p.a.currency), 0)),
     maxDrawdownPct: round2(maxDrawdownPct),
-    monthly: mesi,
-    anni,
+    monthly,
+    anni: [...new Set(monthly.map(m => m.anno))].sort(),
     statistiche,
-    accounts: parts.map(p => ({
-      id: p.a.id,
-      name: p.a.name,
-      currency: p.a.currency,
-      balance: round2(p.a.balance),
-      equity: round2(p.a.equity != null ? p.a.equity : p.a.balance),
-      equityEur: round2(toEur(p.a.equity != null ? p.a.equity : p.a.balance, p.a.currency)),
-      quota: round2(toEur(p.a.equity != null ? p.a.equity : p.a.balance, p.a.currency)
-              / (capitaleEur || 1) * 100),
-      gainPct: round2((p.finale - 1) * 100),
-      gainTotalePct: round2(Number(p.a.gainPct) || 0),
-      absGainPct: round2(Number(p.a.absGainPct) || 0),
-      drawdownPct: round2(Number(p.a.drawdownPct) || 0),
-      equityPct: round2(Number(p.a.equityPct) || 0),
-      profit: round2(Number(p.a.profit) || 0),
-      interest: round2(Number(p.a.interest) || 0),
-      deposits: round2(Number(p.a.deposits) || 0),
-      withdrawals: round2(Number(p.a.withdrawals) || 0)
-    })),
-    from: dates[0], to: dates[dates.length - 1], vuoto: false
+    controlli,
+    accounts: parti.map(p => {
+      const eqEur = toEur(p.a.equity != null ? p.a.equity : p.a.balance, p.a.currency);
+      const totEur = parti.reduce((t, q) =>
+        t + toEur(q.a.equity != null ? q.a.equity : q.a.balance, q.a.currency), 0) || 1;
+      return {
+        id: p.a.id, name: p.a.name, currency: p.a.currency,
+        balance: round2(p.a.balance),
+        equity: round2(p.a.equity != null ? p.a.equity : p.a.balance),
+        equityEur: round2(eqEur),
+        quota: round2(eqEur / totEur * 100),
+        gainPct: round2((p.c.cum[ultimo] - 1) * 100),
+        gainTotalePct: round2(Number(p.a.gainPct) || 0),
+        absGainPct: round2(Number(p.a.absGainPct) || 0),
+        equityPct: round2(Number(p.a.equityPct) || 0),
+        drawdownPct: round2(Number(p.a.drawdownPct) || 0),
+        profit: round2(Number(p.a.profit) || 0),
+        interest: round2(Number(p.a.interest) || 0),
+        deposits: round2(Number(p.a.deposits) || 0),
+        withdrawals: round2(Number(p.a.withdrawals) || 0),
+        flottante: round2(Number(p.a.flottante) || 0),
+        flottantePct: p.a.balance > 0
+          ? round2(Number(p.a.flottante) / p.a.balance * 100) : 0,
+        swapAperto: p.a.swapAperto == null ? null : round2(p.a.swapAperto),
+        swapApertoPct: (p.a.swapAperto == null || !(p.a.balance > 0)) ? null
+          : round2(p.a.swapAperto / p.a.balance * 100),
+        quanteAperte: p.a.quanteAperte
+      };
+    }),
+    from: dates[0], to: dates[ultimo], vuoto: false
   };
 }
 
-/** Dettaglio di un singolo conto: stessa logica, un conto solo. */
+function vuoto(from, to) {
+  return { labels: [], balancePct: [], equityPct: [], swapPct: [],
+    gainPct: 0, equityGainPct: 0, swapPctFinale: 0, swapEur: 0, capitaleEur: 0,
+    maxDrawdownPct: 0, monthly: [], anni: [], statistiche: {}, controlli: {},
+    accounts: [], from: from || null, to: to || null, vuoto: true };
+}
+
+/** Dettaglio di un conto: stessa logica, un conto solo. */
 function buildAccount(account, opts = {}) {
   const h = buildHome([account], opts);
-  const m = byDate(account.series);
-  const swapSerie = h.labels.map(d => (m.get(d) ? m.get(d).swap || 0 : 0));
+  const m = new Map(account.series.map(p => [p.date, p]));
   let cum = 0;
-  const swapCumulato = swapSerie.map(v => (cum += v, round2(cum)));
+  const swapValuta = h.labels.map(d => {
+    const p = m.get(d);
+    cum += p ? (p.swap || 0) : 0;
+    return round2(cum);
+  });
   return Object.assign(h, {
     account: {
       id: account.id, name: account.name, currency: account.currency,
@@ -249,49 +308,18 @@ function buildAccount(account, opts = {}) {
       interest: round2(Number(account.interest) || 0),
       deposits: round2(Number(account.deposits) || 0),
       withdrawals: round2(Number(account.withdrawals) || 0),
-      dailyPct: round2(Number(account.dailyPct) || 0),
-      monthlyPct: round2(Number(account.monthlyPct) || 0),
+      flottante: round2(Number(account.flottante) || 0),
+      flottantePct: account.balance > 0
+        ? round2(Number(account.flottante) / account.balance * 100) : 0,
+      swapAperto: account.swapAperto == null ? null : round2(account.swapAperto),
+      swapApertoPct: (account.swapAperto == null || !(account.balance > 0)) ? null
+        : round2(account.swapAperto / account.balance * 100),
+      quanteAperte: account.quanteAperte,
       primaOperazione: account.primaOperazione || null
     },
-    swapValuta: swapCumulato,
-    swapTotaleValuta: swapCumulato.length ? swapCumulato[swapCumulato.length - 1] : 0
+    swapValuta,
+    swapTotaleValuta: swapValuta.length ? swapValuta[swapValuta.length - 1] : 0
   });
 }
 
-/* ---------- formattazione ---------- */
-
-function etichettaMese(k) {
-  const [y, m] = k.split('-');
-  return `${MESI[Number(m) - 1]} ${String(y).slice(2)}`;
-}
-function round2(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
-}
-
 module.exports = { buildHome, buildAccount, compound, unionDates, round2 };
-
-/* Prova rapida:  node engine.js  */
-if (require.main === module) {
-  const serie = (base, n) => Array.from({ length: n }, (_, i) => ({
-    date: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
-    balanceRet: base + Math.sin(i / 3) / 500,
-    equityRet: base + Math.sin(i / 2) / 300,
-    swap: 12
-  }));
-  const conti = [
-    { id: '1', name: 'Conto EUR', currency: 'EUR', balance: 32000, equity: 31000,
-      gainPct: 103, drawdownPct: 49.17, series: serie(0.0015, 60) },
-    { id: '2', name: 'Conto CHF', currency: 'CHF', balance: 24000, equity: 23000,
-      gainPct: 57, drawdownPct: 41.0, series: serie(0.0011, 60) }
-  ];
-  const h = buildHome(conti, { rates: { CHF: 0.94 } });
-  console.log('punti          :', h.labels.length);
-  console.log('rendimento     :', h.gainPct + '%');
-  console.log('equity         :', h.equityGainPct + '%');
-  console.log('incidenza swap :', h.swapPctFinale + '%');
-  console.log('capitale EUR   :', h.capitaleEur);
-  console.log('drawdown       :', h.maxDrawdownPct + '%');
-  console.log('mesi           :', h.monthly.map(m => m.etichetta + ' ' + m.totale).join(' | '));
-  console.log('quote          :', h.accounts.map(a => a.name + ' ' + a.quota + '%').join(' | '));
-}

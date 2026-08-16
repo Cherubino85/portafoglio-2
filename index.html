@@ -90,6 +90,11 @@
   .conto .cifre{text-align:right;flex:none}
   .conto .cifre b{display:block;font-size:15px;font-weight:640}
   .conto .cifre span{font-size:11.5px;color:var(--ink3)}
+  .ctrl{display:flex;justify-content:space-between;gap:10px;padding:9px 2px;
+    border-top:1px solid var(--line);font-size:12.5px}
+  .ctrl:first-child{border-top:0}
+  .ctrl b{font-weight:580}
+  .ctrl .ok{color:var(--swap)} .ctrl .no{color:var(--giu)}
   .freccia{color:var(--ink3);flex:none}
 
   .su{color:var(--swap)} .giu{color:var(--giu)}
@@ -142,7 +147,8 @@
 
   <section>
     <h2 id="tGraf">Andamento</h2>
-    <p class="desc" id="dGraf">Saldo realizzato, equity con il flottante incluso, e quanto di quel risultato è swap.</p>
+    <p class="desc" id="dGraf">Curve di <b>crescita</b>, non di livello: l'equity si stacca dal saldo
+       quando il flottante cambia, non perché sia più alta in valore assoluto.</p>
     <div class="box"><canvas id="gCresc"></canvas></div>
     <div class="legenda">
       <span><i style="background:var(--bal)"></i>Saldo</span>
@@ -162,6 +168,13 @@
     <h2>Conti</h2>
     <p class="desc">Tocca un conto per vederlo da solo.</p>
     <div id="listaConti"></div>
+  </section>
+
+  <section id="secControlli">
+    <h2>Controlli</h2>
+    <p class="desc">Il rendimento composto qui accanto a quello dichiarato da Myfxbook.
+       Se scartano, il numero da credere è il loro.</p>
+    <div id="controlli"></div>
   </section>
 
   <footer id="pie">—</footer>
@@ -310,8 +323,14 @@ function disegna(){
       card('Profitto', soldi(c.profit,cur), segno(c.profit), 'profit'),
       card('Swap incassato', soldi(c.interest,cur), 'su',
            c.profit ? nf(1).format(c.interest/c.profit*100)+'% del profitto' : 'interest'),
-      card('Versamenti', soldi(c.deposits,cur), '', 'deposits'),
-      card('Prelievi', soldi(c.withdrawals,cur), '', 'withdrawals')
+      card('Drawdown flottante', pct(c.flottantePct), segno(c.flottante),
+           soldi(c.flottante,cur) + (c.flottante < 0
+             ? ' — equity sotto il saldo' : ' — flottante in positivo')),
+      card('Swap accumulato', c.swapAperto == null ? '—' : pct(c.swapApertoPct), 'su',
+           c.swapAperto == null
+             ? 'posizioni aperte non disponibili'
+             : soldi(c.swapAperto,cur) + ' su ' + (c.quanteAperte || 0) +
+               ' posizioni ancora aperte')
     ].join('');
   } else {
     const st = d.statistiche || {};
@@ -324,8 +343,14 @@ function disegna(){
       card('Profitto', soldi(st.profitto,'EUR'), segno(st.profitto), 'somma dei conti'),
       card('Swap incassato', soldi(st.swap,'EUR'), 'su',
            st.profitto ? nf(1).format(st.swap/st.profitto*100)+'% del profitto' : 'somma dei conti'),
-      card('Versamenti', soldi(st.versamenti,'EUR'), '', 'somma dei conti'),
-      card('Prelievi', soldi(st.prelievi,'EUR'), '', 'somma dei conti')
+      card('Drawdown flottante', pct(st.flottantePct), segno(st.flottante),
+           soldi(st.flottante,'EUR') + (st.flottante < 0
+             ? ' — equity sotto il saldo' : ' — flottante in positivo')),
+      card('Swap accumulato', st.swapAperto == null ? '—' : pct(st.swapApertoPct), 'su',
+           st.swapAperto == null
+             ? 'posizioni aperte non disponibili'
+             : soldi(st.swapAperto,'EUR') + ' su ' + (st.posizioniAperte || 0) +
+               ' posizioni ancora aperte')
     ].join('');
   }
 
@@ -344,6 +369,7 @@ function disegna(){
 
   disegnaMensile(d);
   aggiornaConti(d);
+  mostraControlli(d);
   $('pie').textContent = d.aggiornato
     ? 'Aggiornato alle ' + new Date(d.aggiornato).toLocaleTimeString('it-IT',
         {hour:'2-digit',minute:'2-digit'})
@@ -436,6 +462,32 @@ function disegnaMensile(d){
 function ridisegna(vecchio,id,cfg){
   if(vecchio) vecchio.destroy();
   return new Chart($(id).getContext('2d'), cfg);
+}
+
+function mostraControlli(d){
+  const c = d.controlli || {};
+  const righe = [];
+  for(const p of (c.perConto || [])){
+    const ok = Math.abs(p.scarto) < 1.5;
+    righe.push('<div class="ctrl"><span>'+p.nome_||p.conto+'</span>'+
+      '<span class="num"><b>'+pct(p.calcolato)+'</b> qui · <b>'+pct(p.dichiarato)+
+      '</b> Myfxbook · <span class="'+(ok?'ok':'no')+'">'+
+      (p.scarto>0?'+':'')+nf(2).format(p.scarto)+'</span></span></div>');
+  }
+  if(c.rapportoDichiarato != null)
+    righe.push('<div class="ctrl"><span>Equity sul saldo</span>'+
+      '<span class="num"><b>'+nf(2).format(c.rapportoEquitySaldo)+'%</b> qui · <b>'+
+      nf(2).format(c.rapportoDichiarato)+'%</b> Myfxbook · <span class="'+
+      (Math.abs(c.scarto)<1.5?'ok':'no')+'">'+(c.scarto>0?'+':'')+nf(2).format(c.scarto)+
+      '</span></span></div>');
+  if(c.swapDichiarato != null)
+    righe.push('<div class="ctrl"><span>Swap: operazioni chiuse contro totale dichiarato</span>'+
+      '<span class="num">'+soldi(c.swapDaOperazioniChiuse,'EUR')+' · '+
+      soldi(c.swapDichiarato,'EUR')+'</span></div>');
+  if(c.baseCrescitaSaldo)
+    righe.push('<div class="ctrl"><span>Base della curva del saldo</span>'+
+      '<span>'+c.baseCrescitaSaldo+'</span></div>');
+  $('controlli').innerHTML = righe.join('') || '<p class="desc">Nessun controllo disponibile.</p>';
 }
 
 function aggiornaConti(d){

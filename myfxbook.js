@@ -49,6 +49,10 @@ const serieGiornaliera = (session, id, start, end) =>
   chiama('get-data-daily', { session, id, start, end }).then(j => j.dataDaily || []);
 const storico = (session, id) =>
   chiama('get-history', { session, id }).then(j => j.history || []);
+/* Posizioni ancora aperte: e' l'unico posto dove sta lo swap gia' maturato ma
+   non ancora incassato. Lo storico contiene solo le operazioni chiuse. */
+const aperte = (session, id) =>
+  chiama('get-open-trades', { session, id }).then(j => j.openTrades || []);
 
 /* ---------- gestione della sessione ---------- */
 
@@ -107,7 +111,7 @@ function toIso(v) {
  * - equityRet : ricavato dal rapporto tra due valori cumulati di growthEquity
  * - swap      : somma del campo "interest" delle operazioni chiuse quel giorno
  */
-function normalize(conto, dataDaily, history, idx = 0) {
+function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
   const rows = appiattisci(dataDaily)
     .map(r => Object.assign({}, r, { _iso: toIso(r.date) }))
     .filter(r => r._iso)
@@ -122,29 +126,43 @@ function normalize(conto, dataDaily, history, idx = 0) {
   }
 
   const series = [];
-  let prevBal = null, prevGe = null;
+  let prevBal = null;
   for (const r of rows) {
-    const date = r._iso;
     const bal = Number(r.balance) || 0;
     const profit = Number(r.profit) || 0;
 
-    const balanceRet = (prevBal && prevBal !== 0) ? profit / prevBal : 0;
+    /* Crescita cumulata dichiarata da Myfxbook. Il nome del campo del saldo
+       non e' garantito, quindi si prova quello che c'e'; se non c'e' resta
+       null e la curva viene composta dai rendimenti giornalieri. */
+    const num = (...nomi) => {
+      for (const k of nomi) { const v = Number(r[k]); if (Number.isFinite(v)) return v; }
+      return null;
+    };
 
-    // growthEquity e' una percentuale CUMULATA: il rendimento del passo e'
-    // il rapporto fra due cumulate, non la loro differenza.
-    const ge = Number(r.growthEquity);
-    let equityRet = 0;
-    if (prevGe != null && Number.isFinite(ge)) {
-      const denom = 1 + prevGe / 100;
-      if (denom > 0.0001) equityRet = (1 + ge / 100) / denom - 1;
-    }
-
-    series.push({ date, balanceRet, equityRet, swap: swapPerGiorno[date] || 0 });
+    series.push({
+      date: r._iso,
+      balance: bal,
+      // rendimento del giorno al netto di versamenti e prelievi: il profit
+      // li esclude gia', il balance no
+      balanceRet: (prevBal && prevBal !== 0) ? profit / prevBal : 0,
+      profit,
+      swap: swapPerGiorno[r._iso] || 0,
+      ge: num('growthEquity'),
+      gb: num('growthBalance', 'growth', 'growthBalanceEquity')
+    });
     prevBal = bal;
-    if (Number.isFinite(ge)) prevGe = ge;
   }
 
   const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+
+  /* Swap maturato sulle posizioni ancora aperte. Se l'endpoint non risponde
+     resta null e l'interfaccia scrive "non disponibile" invece di uno zero
+     che sembrerebbe un dato. */
+  let swapAperto = null, quanteAperte = null;
+  if (Array.isArray(posizioniAperte)) {
+    quanteAperte = posizioniAperte.length;
+    swapAperto = posizioniAperte.reduce((t, o) => t + (Number(o.interest) || 0), 0);
+  }
 
   return {
     id: String(conto.id != null ? conto.id : idx + 1),
@@ -165,6 +183,12 @@ function normalize(conto, dataDaily, history, idx = 0) {
     withdrawals: n(conto.withdrawals),
     dailyPct: n(conto.daily),
     monthlyPct: n(conto.monthly),
+    /* Il flottante si prende dalla differenza dichiarata da Myfxbook, non
+       dalla somma delle posizioni: e' la loro cifra, ed e' quella che si vede
+       sul loro sito. */
+    flottante: n(conto.equity) - n(conto.balance),
+    swapAperto,
+    quanteAperte,
     primaOperazione: toIso(conto.firstTradeDate),
     aggiornatoIl: toIso(conto.lastUpdateDate),
     series
@@ -220,7 +244,8 @@ async function raccogli({ email, password, start, end }) {
         `nell'intervallo ${da} - ${a}`);
 
     const hist = await conSessione(email, password, s => storico(s, c.id)).catch(() => []);
-    out.push(normalize(c, daily, hist, i));
+    const ap = await conSessione(email, password, s => aperte(s, c.id)).catch(() => null);
+    out.push(normalize(c, daily, hist, i, ap));
   }
   return out;
 }
@@ -271,12 +296,14 @@ async function campi(email, password) {
     campiGiornalieri: righe[0] ? Object.keys(righe[0]) : [],
     esempioGiornaliero: righe[Math.floor(righe.length / 2)] || null,
     campiOperazione: storia[0] ? Object.keys(storia[0]) : [],
+    campiPosizioneAperta: (await aperte(s, c.id).catch(() => []))[0]
+      ? Object.keys((await aperte(s, c.id))[0]) : [],
     quanteRighe: righe.length,
     quanteOperazioni: storia.length
   };
 }
 
 module.exports = {
-  login, listaConti, serieGiornaliera, storico,
+  login, listaConti, serieGiornaliera, storico, aperte,
   normalize, appiattisci, toIso, cambi, raccogli, verifica, campi, conSessione
 };
