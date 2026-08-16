@@ -22,7 +22,7 @@
     --radius:14px;
   }
   *{box-sizing:border-box}
-  html,body{margin:0;background:var(--bg);color:var(--ink);
+  html,body{margin:0;background:var(--bg);color:var(--ink);overflow-x:hidden;
     font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     -webkit-text-size-adjust:100%}
   body{padding:0 14px calc(28px + env(safe-area-inset-bottom))}
@@ -44,9 +44,11 @@
   .gira{animation:gira .9s linear infinite}
   @keyframes gira{to{transform:rotate(360deg)}}
 
-  .chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:12px;scrollbar-width:none}
-  .chips::-webkit-scrollbar{display:none}
-  .chip{flex:none;font:inherit;font-size:12.5px;padding:7px 13px;border-radius:999px;
+  .chips{display:flex;flex-wrap:wrap;gap:6px;padding-bottom:12px}
+  @media(min-width:620px){.chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+    .chips::-webkit-scrollbar{display:none}}
+  .chip{flex:none;font:inherit;font-size:12.5px;padding:10px 14px;border-radius:999px;
+    min-height:40px;display:flex;align-items:center;
     background:var(--panel);color:var(--ink2);border:1px solid var(--line);cursor:pointer}
   .chip[aria-pressed="true"]{background:var(--panel2);color:var(--ink);border-color:var(--line2)}
   .chip:focus-visible{outline:2px solid var(--bal);outline-offset:2px}
@@ -58,14 +60,18 @@
   .date input{width:100%;margin-top:5px;font:inherit;font-size:13px;padding:8px 10px;border-radius:10px;
     background:var(--panel);color:var(--ink);border:1px solid var(--line);color-scheme:dark}
 
-  .kpi{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:14px}
+  .kpi{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-bottom:14px}
+  .kpi > *{min-width:0}
   @media(min-width:620px){.kpi{grid-template-columns:repeat(4,1fr)}}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
-    padding:13px 14px}
+    padding:12px 11px}
+  @media(min-width:620px){.card{padding:13px 14px}}
   .card .et{font-size:11.5px;color:var(--ink3);text-transform:uppercase;
     letter-spacing:.07em;margin-bottom:7px}
-  .card .val{font-size:23px;font-weight:660;letter-spacing:-.02em;line-height:1.1}
-  .card .perc{font-size:13.5px;font-weight:600;margin-top:3px;
+  .card{min-width:0;overflow-wrap:anywhere}
+  .card .val{font-size:clamp(16px,4.9vw,23px);font-weight:660;letter-spacing:-.02em;
+    line-height:1.15}
+  .card .perc{font-size:clamp(12px,3.4vw,13.5px);font-weight:600;margin-top:3px;
     font-variant-numeric:tabular-nums}
   .card .sotto{font-size:11.5px;color:var(--ink3);margin-top:5px;line-height:1.4}
   .gruppo{grid-column:1/-1;font-size:10.5px;color:var(--ink3);font-weight:600;
@@ -91,7 +97,9 @@
   .conto .nome{flex:1;min-width:0}
   .conto .nome b{display:block;font-size:14px;font-weight:580;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .conto .nome span{font-size:11.5px;color:var(--ink3)}
+  .conto .nome{min-width:0}
+  .conto .nome span{font-size:11.5px;color:var(--ink3);display:block;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .conto .cifre{text-align:right;flex:none}
   .conto .cifre b{display:block;font-size:15px;font-weight:640}
   .conto .cifre span{font-size:11.5px;color:var(--ink3)}
@@ -326,9 +334,9 @@ function disegna(){
   $('kpi').innerHTML = [
     '<div class="gruppo">Risultato</div>',
     card('Rendimento', soldi(v.profitto,cur), pct(d.gainPct), segno(d.gainPct),
-         'profitto realizzato' + (dettaglio ? '' : ', somma dei conti')),
+         'crescita del saldo' + (dettaglio ? '' : ' · somma dei conti')),
     card('Equity', soldi(v.equity,cur), pct(d.equityGainPct), segno(d.equityGainPct),
-         nf(2).format(v.equitySuSaldo)+'% del saldo'),
+         'crescita dell\'equity · vale il '+nf(2).format(v.equitySuSaldo)+'% del saldo'),
     card('Saldo', soldi(v.saldo,cur), '', '',
          dettaglio ? 'capitale sul conto' : 'somma dei conti, ai cambi BCE'),
 
@@ -336,30 +344,38 @@ function disegna(){
     card('Drawdown massimo', '−'+nf(2).format(Math.abs(v.drawdown))+'%', '', 'giu',
          dettaglio ? 'dichiarato da Myfxbook' : 'sulla curva equity combinata'),
     card('Drawdown flottante', soldi(v.flottante,cur), pct(v.flottantePct), segno(v.flottante),
-         v.flottante < 0 ? 'equity sotto il saldo' : 'flottante in positivo'),
+         'sul saldo · ' + (v.flottante < 0 ? 'equity sotto il saldo' : 'flottante in positivo')),
 
     '<div class="gruppo">Swap</div>',
     card('Swap incassato', soldi(v.swap,cur),
          v.profitto ? pct(v.swap/v.profitto*100) : '', 'su',
-         'operazioni gia\' chiuse'),
+         'del profitto · operazioni gia\' chiuse'),
     card('Swap accumulato',
          v.swapAperto == null ? '—' : soldi(v.swapAperto,cur),
          v.swapAperto == null ? '' : pct(v.swapApertoPct), 'su',
          v.swapAperto == null ? 'il broker non riporta lo swap sulle posizioni aperte'
-           : 'su ' + (v.aperte || 0) + ' posizioni ancora aperte')
+           : 'sul saldo · ' + (v.aperte || 0) + ' posizioni ancora aperte')
   ].join('');
 
-  const cortoLabel = s => s.slice(8,10)+'/'+s.slice(5,7);
-  const etichette = d.labels.map(cortoLabel);
+  /* Su periodi lunghi giorno e mese non bastano: serve l'anno, altrimenti
+     "24/01" ricompare identico per anni diversi. */
+  const giorni = d.labels.length ? (new Date(d.labels[d.labels.length-1]) -
+    new Date(d.labels[0])) / 86400e3 : 0;
+  const cortoLabel = giorni > 400
+    ? s => s.slice(5,7)+'/'+s.slice(2,4)
+    : s => s.slice(8,10)+'/'+s.slice(5,7);
+
+  const largo = innerWidth >= 620;
+  const rid = dirada(d.labels, [d.balancePct, d.equityPct, d.swapPct], largo ? 900 : 320);
 
   gCresc = ridisegna(gCresc,'gCresc',{
     type:'line',
-    data:{ labels:etichette, datasets:[
-      linea('Saldo', d.balancePct, '#4cc2ff'),
-      linea('Equity', d.equityPct, '#f0b429'),
-      linea('Swap', d.swapPct, '#4ad991', true)
+    data:{ labels: rid.etichette.map(cortoLabel), datasets:[
+      linea('Saldo', rid.serie[0], '#4cc2ff'),
+      linea('Equity', rid.serie[1], '#f0b429'),
+      linea('Swap', rid.serie[2], '#4ad991', true)
     ]},
-    options: opzioni(d.labels, v => nf(1).format(v)+'%')
+    options: opzioni(rid.etichette, v => nf(1).format(v)+'%')
   });
 
   disegnaMensile(d);
@@ -378,9 +394,20 @@ function card(et,valore,percentuale,classe,sotto){
 }
 
 function linea(nome,dati,colore,tratteggio){
-  return { label:nome, data:dati, borderColor:colore, backgroundColor:colore+'1f',
-    borderWidth:2, pointRadius:0, pointHitRadius:14, tension:.22,
-    borderDash: tratteggio?[5,4]:[], fill:!tratteggio && nome==='Equity' };
+  return { label:nome, data:dati, borderColor:colore, backgroundColor:'transparent',
+    borderWidth:1.7, pointRadius:0, pointHitRadius:14, tension:.15,
+    borderDash: tratteggio?[5,4]:[], fill:false };
+}
+
+/* Migliaia di punti su uno schermo da 380px sono rumore: si dirada tenendo
+   il primo, l'ultimo e un campione regolare in mezzo. La forma non cambia. */
+function dirada(etichette, serie, massimo){
+  const n = etichette.length;
+  if(n <= massimo) return { etichette, serie };
+  const passo = Math.ceil(n / massimo);
+  const tieni = i => i % passo === 0 || i === n-1;
+  return { etichette: etichette.filter((_,i)=>tieni(i)),
+           serie: serie.map(s => s.filter((_,i)=>tieni(i))) };
 }
 
 function opzioni(dateIso, fmt){
@@ -398,7 +425,8 @@ function opzioni(dateIso, fmt){
         } }
     },
     scales:{
-      x:{ grid:{ display:false }, ticks:{ color:'#5f6d7e', maxTicksLimit:6,
+      x:{ grid:{ display:false }, ticks:{ color:'#5f6d7e',
+          maxTicksLimit: innerWidth < 620 ? 5 : 8, autoSkip:true, maxRotation:0,
           font:{size:10.5} }, border:{ color:'#232c37' } },
       y:{ grid:{ color:'#1c242e' }, ticks:{ color:'#5f6d7e', font:{size:10.5},
           callback: v => fmt(v) }, border:{ display:false } }
@@ -414,6 +442,8 @@ function disegnaMensile(d){
   $('anni').innerHTML = anni.map(a =>
     '<button class="chip" data-anno="'+a+'" aria-pressed="'+(a===annoAttivo)+'">'+a+'</button>'
   ).join('');
+  const attivo = $('anni').querySelector('[aria-pressed="true"]');
+  if(attivo && attivo.scrollIntoView) attivo.scrollIntoView({block:'nearest',inline:'center'});
 
   const delMese = {};
   for(const m of d.monthly) if(m.anno===annoAttivo) delMese[Number(m.mese.slice(5,7))] = m;
@@ -445,8 +475,8 @@ function disegnaMensile(d){
                 (stato.capitale && e!=null ? '   ' + nf(0).format(e) + ' €' : '');
             } } } },
       scales:{
-        x:{ grid:{display:false}, ticks:{color:'#5f6d7e',font:{size:10.5}},
-            border:{color:'#232c37'} },
+        x:{ grid:{display:false}, ticks:{color:'#5f6d7e',font:{size:10.5},
+            autoSkip:true, maxRotation:0, minRotation:0}, border:{color:'#232c37'} },
         y:{ grid:{color:'#1c242e'}, ticks:{color:'#5f6d7e',font:{size:10.5},
             callback: v => nf(1).format(v)+'%' }, border:{display:false} }
       }

@@ -77,16 +77,23 @@ function suAsse(dates, account) {
      il rapporto fra due cumulate, non una ricostruzione. Se la crescita del
      saldo non e' dichiarata si ripiega sui rendimenti da profit, che sono
      comunque al netto di versamenti e prelievi. */
+  let anomalie = 0;
   const passo = (serie, ripiego) => serie.map((v, i) => {
-    if (v == null) return ripiego[i];
+    if (v == null) return Math.abs(ripiego[i]) > 0.5 ? 0 : ripiego[i];
     const prec = i > 0 ? serie[i - 1] : null;
     if (prec == null) return 0;
     const den = 1 + prec / 100;
-    return den > 0.0001 ? (1 + v / 100) / den - 1 : 0;
+    if (den <= 0.01) { anomalie++; return 0; }
+    const r = (1 + v / 100) / den - 1;
+    /* Un conto non perde meta' del capitale in un giorno ne' lo raddoppia: se
+       il passo esce da questa forbice, la serie cumulata ha un salto e va
+       ignorato. Propagarlo azzera la curva composta e falsa tutto il resto. */
+    if (!Number.isFinite(r) || r < -0.5 || r > 1) { anomalie++; return 0; }
+    return r;
   });
   const retSaldo = passo(gb, ret);
   const retEquity = passo(ge, retSaldo);
-  return { bal, ret, swap, ge, gb, retSaldo, retEquity,
+  return { bal, ret, swap, ge, gb, retSaldo, retEquity, anomalie,
            cum: compound(retSaldo),
            dichiarata: gb.some(v => v != null) };
 }
@@ -103,8 +110,17 @@ function buildHome(accounts, opts = {}) {
     return r > 0 ? (Number(v) || 0) / r : (Number(v) || 0);
   };
 
-  const dates = unionDates(accounts, from, to);
+  let dates = unionDates(accounts, from, to);
   if (!dates.length) return vuoto(from, to);
+
+  /* Si parte dal primo giorno in cui almeno un conto ha un saldo: prima di
+     quello non c'e' portafoglio, ci sono solo rilevazioni a zero che
+     allungano l'asse e creano anni che non sono mai esistiti. */
+  const primoVero = dates.findIndex(d => accounts.some(a => {
+    const p = a.series.find(x => x.date === d);
+    return p && Number(p.balance) > 0;
+  }));
+  if (primoVero > 0) dates = dates.slice(primoVero);
 
   const parti = accounts.map(a => ({ a, c: suAsse(dates, a) }));
 
@@ -214,6 +230,7 @@ function buildHome(accounts, opts = {}) {
     baseCurve: parti.every(p => p.c.dichiarata)
       ? 'curve dichiarate da Myfxbook'
       : 'crescita del saldo composta dai rendimenti giornalieri',
+    passiAnomaliIgnorati: parti.reduce((t, p) => t + (p.c.anomalie || 0), 0),
     swapDaOperazioniChiuse: round2(swapEur),
     swapDichiarato: statistiche.swap,
     perConto: parti.map(p => ({
