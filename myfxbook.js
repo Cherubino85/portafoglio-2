@@ -184,29 +184,62 @@ async function raccogli({ email, password, start, end }) {
   return out;
 }
 
-/** Prova i passi uno per uno e riferisce dove si rompe. Serve alla diagnosi. */
+/**
+ * Prova diversi modi di usare la sessione e riferisce quale funziona.
+ * Un solo login, poi la stessa sessione usata in quattro modi: cosi' si
+ * isola la causa invece di indovinarla.
+ */
 async function verifica(email, password) {
-  const passi = [];
+  const esiti = [];
+  const UA = { accept: 'application/json',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36' };
+
   let s;
   try {
     s = await login(email, password);
-    passi.push({ passo: 'login', esito: 'ok', sessione: String(s).slice(0, 6) + '\u2026' });
+    esiti.push({ prova: 'login', esito: 'ok',
+      inizio: String(s).slice(0, 6) + '\u2026', lunghezza: String(s).length,
+      caratteriDaCodificare: /[^A-Za-z0-9._~-]/.test(String(s)) });
   } catch (e) {
-    passi.push({ passo: 'login', esito: 'errore', messaggio: e.message });
-    return { passi };
+    esiti.push({ prova: 'login', esito: 'errore', messaggio: e.message });
+    return { esiti, momento: new Date().toISOString() };
   }
+
+  const leggi = async (nome, url, headers) => {
+    try {
+      const r = await fetch(url, { headers: headers || { accept: 'application/json' } });
+      if (!r.ok) { esiti.push({ prova: nome, esito: 'errore', messaggio: 'HTTP ' + r.status }); return; }
+      const j = await r.json();
+      esiti.push(j.error
+        ? { prova: nome, esito: 'errore', messaggio: j.message }
+        : { prova: nome, esito: 'ok', conti: (j.accounts || []).length,
+            nomi: (j.accounts || []).map(c => c.name) });
+    } catch (e) { esiti.push({ prova: nome, esito: 'eccezione', messaggio: e.message }); }
+  };
+
+  const u = new URL(`${BASE}/get-my-accounts.json`);
+  u.searchParams.set('session', s);
+  await leggi('sessione come parametro codificato', u.toString());
+  await leggi('sessione concatenata grezza', `${BASE}/get-my-accounts.json?session=${s}`);
+  await leggi('sessione con encodeURIComponent',
+    `${BASE}/get-my-accounts.json?session=${encodeURIComponent(s)}`);
+  await leggi('sessione grezza con intestazioni da browser',
+    `${BASE}/get-my-accounts.json?session=${s}`, UA);
+
+  // la stessa sessione dopo un'attesa: distingue "nasce morta" da "muore subito"
+  await new Promise(r => setTimeout(r, 2000));
+  await leggi('stessa sessione dopo 2 secondi', `${BASE}/get-my-accounts.json?session=${s}`);
+
+  // sessione nuova usata all'istante
   try {
-    const conti = await listaConti(s);
-    passi.push({ passo: 'get-my-accounts', esito: 'ok', quanti: conti.length,
-                 conti: conti.map(c => ({ id: c.id, nome: c.name, valuta: c.currency })) });
-    if (conti[0]) {
-      const d = await serieGiornaliera(s, conti[0].id);
-      passi.push({ passo: 'get-data-daily', esito: 'ok', righe: appiattisci(d).length });
-    }
+    const s2 = await login(email, password);
+    await leggi('sessione nuova usata subito', `${BASE}/get-my-accounts.json?session=${s2}`);
+    esiti.push({ prova: 'le due sessioni sono uguali', esito: String(s) === String(s2) ? 'si' : 'no' });
   } catch (e) {
-    passi.push({ passo: 'lettura conti', esito: 'errore', messaggio: e.message });
+    esiti.push({ prova: 'secondo login', esito: 'errore', messaggio: e.message });
   }
-  return { passi };
+
+  return { esiti, momento: new Date().toISOString() };
 }
 
 module.exports = {
