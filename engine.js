@@ -73,7 +73,22 @@ function suAsse(dates, account) {
     ge.push(ultimoGe);
     gb.push(ultimoGb);
   }
-  return { bal, ret, swap, ge, gb, cum: compound(ret) };
+  /* Rendimenti giornalieri RICAVATI dalle cumulate dichiarate da Myfxbook:
+     il rapporto fra due cumulate, non una ricostruzione. Se la crescita del
+     saldo non e' dichiarata si ripiega sui rendimenti da profit, che sono
+     comunque al netto di versamenti e prelievi. */
+  const passo = (serie, ripiego) => serie.map((v, i) => {
+    if (v == null) return ripiego[i];
+    const prec = i > 0 ? serie[i - 1] : null;
+    if (prec == null) return 0;
+    const den = 1 + prec / 100;
+    return den > 0.0001 ? (1 + v / 100) / den - 1 : 0;
+  });
+  const retSaldo = passo(gb, ret);
+  const retEquity = passo(ge, retSaldo);
+  return { bal, ret, swap, ge, gb, retSaldo, retEquity,
+           cum: compound(retSaldo),
+           dichiarata: gb.some(v => v != null) };
 }
 
 /**
@@ -93,49 +108,36 @@ function buildHome(accounts, opts = {}) {
 
   const parti = accounts.map(a => ({ a, c: suAsse(dates, a) }));
 
-  /* ---- curva del saldo: rendimenti pesati sui saldi del giorno prima ---- */
-  const rComb = [], rSwap = [];
+  /* ---- curve combinate ----
+   * Ogni conto entra con la propria curva DICHIARATA da Myfxbook. L'unica cosa
+   * calcolata qui e' la combinazione fra piu' conti, che Myfxbook non fornisce
+   * perche' non sa che li consideri un portafoglio solo. I pesi sono i saldi
+   * di quel giorno, convertiti in euro.
+   * Con un conto solo i pesi valgono 1 e la curva e' esattamente la loro. */
+  const rSaldo = [], rEquity = [], rSwap = [];
   for (let i = 0; i < dates.length; i++) {
     const j = i > 0 ? i - 1 : 0;
     const pesi = parti.map(p => toEur(p.c.bal[j], p.a.currency));
     const tot = pesi.reduce((x, y) => x + y, 0);
-    if (tot <= 0) { rComb.push(0); rSwap.push(0); continue; }
-    let r = 0, s = 0;
+    if (tot <= 0) { rSaldo.push(0); rEquity.push(0); rSwap.push(0); continue; }
+    let a = 0, e = 0, s2 = 0;
     parti.forEach((p, k) => {
       const w = pesi[k] / tot;
-      r += w * p.c.ret[i];
-      // lo swap come rendimento: quanto ha reso, non quanti euro erano
+      a += w * p.c.retSaldo[i];
+      e += w * p.c.retEquity[i];
       const base = p.c.bal[j];
-      s += w * (base > 0 ? p.c.swap[i] / base : 0);
+      s2 += w * (base > 0 ? p.c.swap[i] / base : 0);
     });
-    rComb.push(r); rSwap.push(s);
+    rSaldo.push(a); rEquity.push(e); rSwap.push(s2);
   }
-  const curvaSaldo = compound(rComb);
+  const curvaSaldo = compound(rSaldo);
+  const curvaEquity = compound(rEquity);
   const curvaSwap = compound(rSwap);
-
-  /* ---- rapporto equity/saldo, dalle cumulate dichiarate da Myfxbook ---- */
-  const rapporto = [];
-  for (let i = 0; i < dates.length; i++) {
-    let eq = 0, bal = 0;
-    parti.forEach(p => {
-      const b = toEur(p.c.bal[i], p.a.currency);
-      bal += b;
-      const ge = p.c.ge[i];
-      // se Myfxbook non dichiara la crescita del saldo, si usa quella composta
-      // qui: entrambe sono al netto di versamenti, quindi stessa base
-      const gb = p.c.gb[i] != null ? p.c.gb[i] : (p.c.cum[i] - 1) * 100;
-      const k = (ge != null && (1 + gb / 100) > 0.0001)
-        ? (1 + ge / 100) / (1 + gb / 100) : 1;
-      eq += b * k;
-    });
-    rapporto.push(bal > 0 ? eq / bal : 1);
-  }
-  const rap0 = rapporto[0] || 1;
 
   const balancePct = [], equityPct = [], swapPct = [];
   for (let i = 0; i < dates.length; i++) {
     balancePct.push((curvaSaldo[i] - 1) * 100);
-    equityPct.push((curvaSaldo[i] * (rapporto[i] / rap0) - 1) * 100);
+    equityPct.push((curvaEquity[i] - 1) * 100);
     swapPct.push((curvaSwap[i] - 1) * 100);
   }
 
@@ -208,25 +210,17 @@ function buildHome(accounts, opts = {}) {
     t + toEur(p.c.swap.reduce((x, y) => x + y, 0), p.a.currency), 0);
 
   /* ---- controlli di coerenza, esposti invece che nascosti ---- */
-  const rapportoFinale = rapporto[ultimo];
-  const dichiarato = statistiche.saldo > 0 ? statistiche.equity / statistiche.saldo : null;
   const controlli = {
-    rapportoEquitySaldo: round2(rapportoFinale * 100),
-    rapportoDichiarato: dichiarato != null ? round2(dichiarato * 100) : null,
-    scarto: dichiarato != null ? round2((rapportoFinale - dichiarato) * 100) : null,
-    baseCrescitaSaldo: parti.every(p => p.c.gb[ultimo] != null)
-      ? 'dichiarata da Myfxbook' : 'composta dai rendimenti giornalieri',
+    baseCurve: parti.every(p => p.c.dichiarata)
+      ? 'curve dichiarate da Myfxbook'
+      : 'crescita del saldo composta dai rendimenti giornalieri',
     swapDaOperazioniChiuse: round2(swapEur),
     swapDichiarato: statistiche.swap,
-    /* Il controllo che conta: il rendimento composto qui deve coincidere con
-       il Gain dichiarato da Myfxbook. Se scarta, la curva del saldo non e'
-       sulla loro stessa base e va corretta, non giustificata. */
     perConto: parti.map(p => ({
       conto: p.a.name,
       calcolato: round2((p.c.cum[ultimo] - 1) * 100),
       dichiarato: round2(Number(p.a.gainPct) || 0),
-      scarto: round2((p.c.cum[ultimo] - 1) * 100 - (Number(p.a.gainPct) || 0)),
-      finestraIntera: !from && !to
+      scarto: round2((p.c.cum[ultimo] - 1) * 100 - (Number(p.a.gainPct) || 0))
     }))
   };
 

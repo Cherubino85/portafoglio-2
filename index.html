@@ -142,8 +142,8 @@
 
   <section>
     <h2 id="tGraf">Andamento</h2>
-    <p class="desc" id="dGraf">Curve di <b>crescita</b>, non di livello: l'equity si stacca dal saldo
-       quando il flottante cambia, non perché sia più alta in valore assoluto.</p>
+    <p class="desc" id="dGraf">Le curve pubblicate da Myfxbook. Sono crescite, non livelli:
+       l'equity può stare sotto al saldo pur essendo più alta in valore, se è cresciuta di meno.</p>
     <div class="box"><canvas id="gCresc"></canvas></div>
     <div class="legenda">
       <span><i style="background:var(--bal)"></i>Saldo</span>
@@ -301,13 +301,11 @@ function disegna(){
   if (dettaglio) {
     const c = d.account;
     $('kpi').innerHTML = [
-      card('Rendimento', pct(c.gainPct), segno(c.gainPct), 'Gain, da Myfxbook'),
-      card('Rendimento assoluto', pct(c.absGainPct), segno(c.absGainPct), 'Abs. Gain'),
-      card('Drawdown', '−'+nf(2).format(Math.abs(c.drawdownPct))+'%', 'giu', 'da Myfxbook'),
-      card('Nel periodo', pct(d.gainPct), segno(d.gainPct), 'solo l\'intervallo scelto sopra'),
+      card('Rendimento', pct(d.gainPct), segno(d.gainPct), 'crescita del saldo, Myfxbook'),
+      card('Equity', pct(d.equityGainPct), segno(d.equityGainPct), 'crescita dell\'equity, Myfxbook'),
+      card('Drawdown massimo', '−'+nf(2).format(Math.abs(c.drawdownPct))+'%', 'giu', 'da Myfxbook'),
       card('Saldo', soldi(c.balance,cur), '', 'balance'),
-      card('Equity', soldi(c.equity,cur), '',
-           nf(2).format(c.equityPct)+'% del saldo'),
+      card('Equity', soldi(c.equity,cur), '', nf(2).format(c.equityPct)+'% del saldo'),
       card('Profitto', soldi(c.profit,cur), segno(c.profit), 'profit'),
       card('Swap incassato', soldi(c.interest,cur), 'su',
            c.profit ? nf(1).format(c.interest/c.profit*100)+'% del profitto' : 'interest'),
