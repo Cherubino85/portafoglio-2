@@ -65,7 +65,12 @@
   .card .et{font-size:11.5px;color:var(--ink3);text-transform:uppercase;
     letter-spacing:.07em;margin-bottom:7px}
   .card .val{font-size:23px;font-weight:660;letter-spacing:-.02em;line-height:1.1}
-  .card .sotto{font-size:11.5px;color:var(--ink3);margin-top:5px}
+  .card .perc{font-size:13.5px;font-weight:600;margin-top:3px;
+    font-variant-numeric:tabular-nums}
+  .card .sotto{font-size:11.5px;color:var(--ink3);margin-top:5px;line-height:1.4}
+  .gruppo{grid-column:1/-1;font-size:10.5px;color:var(--ink3);font-weight:600;
+    text-transform:uppercase;letter-spacing:.09em;margin:10px 0 -2px}
+  .gruppo:first-child{margin-top:0}
 
   section{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
     padding:14px;margin-bottom:14px}
@@ -298,47 +303,51 @@ function disegna(){
      cosi' come sono: e' l'unico modo perche' coincidano con il loro sito.
      Il rendimento del periodo, che dipende dall'intervallo scelto qui, e'
      tenuto separato e detto esplicitamente. */
-  if (dettaglio) {
-    const c = d.account;
-    $('kpi').innerHTML = [
-      card('Rendimento', pct(d.gainPct), segno(d.gainPct), 'crescita del saldo, Myfxbook'),
-      card('Equity', pct(d.equityGainPct), segno(d.equityGainPct), 'crescita dell\'equity, Myfxbook'),
-      card('Drawdown massimo', '−'+nf(2).format(Math.abs(c.drawdownPct))+'%', 'giu', 'da Myfxbook'),
-      card('Saldo', soldi(c.balance,cur), '', 'balance'),
-      card('Equity', soldi(c.equity,cur), '', nf(2).format(c.equityPct)+'% del saldo'),
-      card('Profitto', soldi(c.profit,cur), segno(c.profit), 'profit'),
-      card('Swap incassato', soldi(c.interest,cur), 'su',
-           c.profit ? nf(1).format(c.interest/c.profit*100)+'% del profitto' : 'interest'),
-      card('Drawdown flottante', pct(c.flottantePct), segno(c.flottante),
-           soldi(c.flottante,cur) + (c.flottante < 0
-             ? ' — equity sotto il saldo' : ' — flottante in positivo')),
-      card('Swap accumulato', c.swapAperto == null ? '—' : pct(c.swapApertoPct), 'su',
-           c.swapAperto == null
-             ? 'posizioni aperte non disponibili'
-             : soldi(c.swapAperto,cur) + ' su ' + (c.quanteAperte || 0) +
-               ' posizioni ancora aperte')
-    ].join('');
-  } else {
-    const st = d.statistiche || {};
-    $('kpi').innerHTML = [
-      card('Rendimento combinato', pct(d.gainPct), segno(d.gainPct), 'saldo, nel periodo scelto'),
-      card('Equity', pct(d.equityGainPct), segno(d.equityGainPct), 'flottante incluso'),
-      card('Drawdown massimo', '−'+nf(2).format(Math.abs(d.maxDrawdownPct))+'%', 'giu',
-           'sulla curva equity combinata'),
-      card('Capitale totale', soldi(d.capitaleEur,'EUR'), '', 'equity ai cambi BCE'),
-      card('Profitto', soldi(st.profitto,'EUR'), segno(st.profitto), 'somma dei conti'),
-      card('Swap incassato', soldi(st.swap,'EUR'), 'su',
-           st.profitto ? nf(1).format(st.swap/st.profitto*100)+'% del profitto' : 'somma dei conti'),
-      card('Drawdown flottante', pct(st.flottantePct), segno(st.flottante),
-           soldi(st.flottante,'EUR') + (st.flottante < 0
-             ? ' — equity sotto il saldo' : ' — flottante in positivo')),
-      card('Swap accumulato', st.swapAperto == null ? '—' : pct(st.swapApertoPct), 'su',
-           st.swapAperto == null
-             ? 'posizioni aperte non disponibili'
-             : soldi(st.swapAperto,'EUR') + ' su ' + (st.posizioniAperte || 0) +
-               ' posizioni ancora aperte')
-    ].join('');
-  }
+  /* Un'unica sorgente di valori: la home e la pagina del conto disegnano le
+     stesse voci nello stesso ordine, cambia solo da dove arrivano i numeri.
+     Cosi' non possono piu' divergere per distrazione. */
+  const st = d.statistiche || {};
+  const c = dettaglio ? d.account : null;
+  const v = dettaglio ? {
+    profitto: c.profit, saldo: c.balance, equity: c.equity,
+    equitySuSaldo: c.equityPct, drawdown: c.drawdownPct,
+    flottante: c.flottante, flottantePct: c.flottantePct,
+    swap: c.interest, swapAperto: c.swapAperto, swapApertoPct: c.swapApertoPct,
+    aperte: c.quanteAperte
+  } : {
+    profitto: st.profitto, saldo: st.saldo, equity: st.equity,
+    equitySuSaldo: st.saldo > 0 ? st.equity / st.saldo * 100 : 0,
+    drawdown: d.maxDrawdownPct,
+    flottante: st.flottante, flottantePct: st.flottantePct,
+    swap: st.swap, swapAperto: st.swapAperto, swapApertoPct: st.swapApertoPct,
+    aperte: st.posizioniAperte
+  };
+
+  $('kpi').innerHTML = [
+    '<div class="gruppo">Risultato</div>',
+    card('Rendimento', soldi(v.profitto,cur), pct(d.gainPct), segno(d.gainPct),
+         'profitto realizzato' + (dettaglio ? '' : ', somma dei conti')),
+    card('Equity', soldi(v.equity,cur), pct(d.equityGainPct), segno(d.equityGainPct),
+         nf(2).format(v.equitySuSaldo)+'% del saldo'),
+    card('Saldo', soldi(v.saldo,cur), '', '',
+         dettaglio ? 'capitale sul conto' : 'somma dei conti, ai cambi BCE'),
+
+    '<div class="gruppo">Rischio</div>',
+    card('Drawdown massimo', '−'+nf(2).format(Math.abs(v.drawdown))+'%', '', 'giu',
+         dettaglio ? 'dichiarato da Myfxbook' : 'sulla curva equity combinata'),
+    card('Drawdown flottante', soldi(v.flottante,cur), pct(v.flottantePct), segno(v.flottante),
+         v.flottante < 0 ? 'equity sotto il saldo' : 'flottante in positivo'),
+
+    '<div class="gruppo">Swap</div>',
+    card('Swap incassato', soldi(v.swap,cur),
+         v.profitto ? pct(v.swap/v.profitto*100) : '', 'su',
+         'operazioni gia\' chiuse'),
+    card('Swap accumulato',
+         v.swapAperto == null ? '—' : soldi(v.swapAperto,cur),
+         v.swapAperto == null ? '' : pct(v.swapApertoPct), 'su',
+         v.swapAperto == null ? 'il broker non riporta lo swap sulle posizioni aperte'
+           : 'su ' + (v.aperte || 0) + ' posizioni ancora aperte')
+  ].join('');
 
   const cortoLabel = s => s.slice(8,10)+'/'+s.slice(5,7);
   const etichette = d.labels.map(cortoLabel);
@@ -361,9 +370,10 @@ function disegna(){
     : '—';
 }
 
-function card(et,valore,classe,sotto){
+function card(et,valore,percentuale,classe,sotto){
   return '<div class="card"><div class="et">'+et+'</div>'+
-    '<div class="val num '+(classe||'')+'">'+valore+'</div>'+
+    '<div class="val num">'+valore+'</div>'+
+    (percentuale?'<div class="perc num '+(classe||'')+'">'+percentuale+'</div>':'')+
     (sotto?'<div class="sotto">'+sotto+'</div>':'')+'</div>';
 }
 
