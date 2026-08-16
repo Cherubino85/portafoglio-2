@@ -21,6 +21,7 @@ exports.handler = async (event) => {
   const opzioni = { from: q.from, to: q.to, force: q.force === '1' };
   try {
     if (q.diagnostica === '1') return risposta(200, await dati.diagnostica());
+    if (q.campi === '1') return risposta(200, await dati.campi());
     const out = q.id ? await dati.account(q.id, opzioni) : await dati.home(opzioni);
     return risposta(200, out);
   } catch (e) {
