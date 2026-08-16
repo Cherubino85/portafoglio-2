@@ -178,16 +178,33 @@ async function cambi() {
 
 /* ---------- raccolta completa ---------- */
 
-/** Scarica tutto, una richiesta alla volta, e restituisce i conti normalizzati. */
+/**
+ * Scarica tutto, una richiesta alla volta.
+ *
+ * get-data-daily PRETENDE start ed end in formato yyyy-mm-dd: senza intervallo
+ * non restituisce nulla. Si parte dalla prima operazione del conto, non da una
+ * data inventata, cosi' non si perdono rilevazioni ne' si chiedono anni vuoti.
+ *
+ * Se la serie giornaliera non arriva, l'errore NON viene nascosto: senza quella
+ * non c'e' niente da mostrare, e un grafico vuoto senza spiegazione fa perdere
+ * piu' tempo di un messaggio chiaro. Lo storico operazioni invece serve solo
+ * allo swap: se manca, si prosegue senza.
+ */
 async function raccogli({ email, password, start, end }) {
   const conti = await conSessione(email, password, s => listaConti(s));
+  const oggi = new Date().toISOString().slice(0, 10);
   const out = [];
   for (let i = 0; i < conti.length; i++) {
     const c = conti[i];
-    const daily = await conSessione(email, password,
-      s => serieGiornaliera(s, c.id, start, end)).catch(() => []);
-    const hist = await conSessione(email, password,
-      s => storico(s, c.id)).catch(() => []);
+    const da = start || toIso(c.firstTradeDate) || '2010-01-01';
+    const a = end || oggi;
+
+    const daily = await conSessione(email, password, s => serieGiornaliera(s, c.id, da, a));
+    if (!appiattisci(daily).length)
+      throw new Error(`Myfxbook non ha restituito rilevazioni per "${c.name}" ` +
+        `nell'intervallo ${da} - ${a}`);
+
+    const hist = await conSessione(email, password, s => storico(s, c.id)).catch(() => []);
     out.push(normalize(c, daily, hist, i));
   }
   return out;
@@ -210,8 +227,10 @@ async function verifica(email, password) {
       conti: conti.map(c => ({ id: c.id, nome: c.name, valuta: c.currency,
         saldo: c.balance, guadagno: c.gain, drawdown: c.drawdown })) });
     if (conti[0]) {
-      const d = appiattisci(await serieGiornaliera(s, conti[0].id));
-      passi.push({ passo: 'get-data-daily', esito: 'ok', righe: d.length,
+      const da = toIso(conti[0].firstTradeDate) || '2010-01-01';
+      const a = new Date().toISOString().slice(0, 10);
+      const d = appiattisci(await serieGiornaliera(s, conti[0].id, da, a));
+      passi.push({ passo: 'get-data-daily', esito: 'ok', intervallo: da + ' - ' + a, righe: d.length,
         prima: d[0] && d[0].date, ultima: d[d.length - 1] && d[d.length - 1].date });
       const h = await storico(s, conti[0].id);
       passi.push({ passo: 'get-history', esito: 'ok', operazioni: (h || []).length });
