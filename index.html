@@ -90,11 +90,6 @@
   .conto .cifre{text-align:right;flex:none}
   .conto .cifre b{display:block;font-size:15px;font-weight:640}
   .conto .cifre span{font-size:11.5px;color:var(--ink3)}
-  .ctrl{display:flex;justify-content:space-between;gap:10px;padding:9px 2px;
-    border-top:1px solid var(--line);font-size:12.5px}
-  .ctrl:first-child{border-top:0}
-  .ctrl b{font-weight:580}
-  .ctrl .ok{color:var(--swap)} .ctrl .no{color:var(--giu)}
   .freccia{color:var(--ink3);flex:none}
 
   .su{color:var(--swap)} .giu{color:var(--giu)}
@@ -168,13 +163,6 @@
     <h2>Conti</h2>
     <p class="desc">Tocca un conto per vederlo da solo.</p>
     <div id="listaConti"></div>
-  </section>
-
-  <section id="secControlli">
-    <h2>Controlli</h2>
-    <p class="desc">Il rendimento composto qui accanto a quello dichiarato da Myfxbook.
-       Se scartano, il numero da credere è il loro.</p>
-    <div id="controlli"></div>
   </section>
 
   <footer id="pie">—</footer>
@@ -369,7 +357,6 @@ function disegna(){
 
   disegnaMensile(d);
   aggiornaConti(d);
-  mostraControlli(d);
   $('pie').textContent = d.aggiornato
     ? 'Aggiornato alle ' + new Date(d.aggiornato).toLocaleTimeString('it-IT',
         {hour:'2-digit',minute:'2-digit'})
@@ -462,32 +449,6 @@ function disegnaMensile(d){
 function ridisegna(vecchio,id,cfg){
   if(vecchio) vecchio.destroy();
   return new Chart($(id).getContext('2d'), cfg);
-}
-
-function mostraControlli(d){
-  const c = d.controlli || {};
-  const righe = [];
-  for(const p of (c.perConto || [])){
-    const ok = Math.abs(p.scarto) < 1.5;
-    righe.push('<div class="ctrl"><span>'+p.nome_||p.conto+'</span>'+
-      '<span class="num"><b>'+pct(p.calcolato)+'</b> qui · <b>'+pct(p.dichiarato)+
-      '</b> Myfxbook · <span class="'+(ok?'ok':'no')+'">'+
-      (p.scarto>0?'+':'')+nf(2).format(p.scarto)+'</span></span></div>');
-  }
-  if(c.rapportoDichiarato != null)
-    righe.push('<div class="ctrl"><span>Equity sul saldo</span>'+
-      '<span class="num"><b>'+nf(2).format(c.rapportoEquitySaldo)+'%</b> qui · <b>'+
-      nf(2).format(c.rapportoDichiarato)+'%</b> Myfxbook · <span class="'+
-      (Math.abs(c.scarto)<1.5?'ok':'no')+'">'+(c.scarto>0?'+':'')+nf(2).format(c.scarto)+
-      '</span></span></div>');
-  if(c.swapDichiarato != null)
-    righe.push('<div class="ctrl"><span>Swap: operazioni chiuse contro totale dichiarato</span>'+
-      '<span class="num">'+soldi(c.swapDaOperazioniChiuse,'EUR')+' · '+
-      soldi(c.swapDichiarato,'EUR')+'</span></div>');
-  if(c.baseCrescitaSaldo)
-    righe.push('<div class="ctrl"><span>Base della curva del saldo</span>'+
-      '<span>'+c.baseCrescitaSaldo+'</span></div>');
-  $('controlli').innerHTML = righe.join('') || '<p class="desc">Nessun controllo disponibile.</p>';
 }
 
 function aggiornaConti(d){

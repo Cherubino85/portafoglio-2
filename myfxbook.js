@@ -161,7 +161,19 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
   let swapAperto = null, quanteAperte = null;
   if (Array.isArray(posizioniAperte)) {
     quanteAperte = posizioniAperte.length;
-    swapAperto = posizioniAperte.reduce((t, o) => t + (Number(o.interest) || 0), 0);
+    // il nome del campo non e' garantito: si prende il primo che esiste
+    const swapDi = (o) => {
+      for (const k of ['interest', 'swap', 'swaps', 'storage', 'rollover']) {
+        const v = Number(o[k]);
+        if (Number.isFinite(v) && v !== 0) return v;
+      }
+      return 0;
+    };
+    const totale = posizioniAperte.reduce((t, o) => t + swapDi(o), 0);
+    /* Se ci sono posizioni aperte ma lo swap risulta zero, il broker non lo
+       sta riportando: e' un'assenza di dato, non uno swap pari a zero. Meglio
+       dirlo che mostrare uno zero che sembra una misura. */
+    swapAperto = (quanteAperte > 0 && totale === 0) ? null : totale;
   }
 
   return {
