@@ -141,7 +141,8 @@
     <button class="chip" data-r="6m">6 mesi</button>
     <button class="chip" data-r="ytd">Anno in corso</button>
     <button class="chip" data-r="1a">12 mesi</button>
-    <button class="chip" data-r="max" aria-pressed="true">Tutto</button>
+    <button class="chip" data-r="strategia" aria-pressed="true">Dal 2023</button>
+    <button class="chip" data-r="max">Storico completo</button>
     <button class="chip" data-r="date">Date…</button>
   </div>
   <div class="date" id="date">
@@ -155,13 +156,12 @@
 
   <section>
     <h2 id="tGraf">Andamento</h2>
-    <p class="desc" id="dGraf">Le curve pubblicate da Myfxbook. Sono crescite, non livelli:
-       l'equity può stare sotto al saldo pur essendo più alta in valore, se è cresciuta di meno.</p>
+    <p class="desc" id="dGraf">Crescite, non livelli: l'equity può stare sotto al saldo
+       pur essendo più alta in valore, se è cresciuta di meno.</p>
     <div class="box"><canvas id="gCresc"></canvas></div>
     <div class="legenda">
       <span><i style="background:var(--bal)"></i>Saldo</span>
       <span><i style="background:var(--eq)"></i>Equity</span>
-      <span><i style="background:var(--swap)"></i>Swap incassato</span>
     </div>
   </section>
 
@@ -191,12 +191,16 @@ const $ = id => document.getElementById(id);
    un'altra app (il simulatore) e le chiavi generiche si sovrascriverebbero. */
 const MESI_BREVI = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic'];
 let annoAttivo = 0;
+/* I conti su Myfxbook contengono anche l'operativita' precedente alla griglia:
+   il piu' vecchio parte dal 2016. Mescolarla falsa rendimento e drawdown, che
+   finiscono per descrivere un sistema che non e' questo. */
+const INIZIO_STRATEGIA = '2023-01-01';
 const K = { range:'pf:range', da:'pf:da', a:'pf:a', capitale:'pf:capitale' };
 const leggi = (k,d) => { try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(_){ return d; } };
 const scrivi = (k,v) => { try{ localStorage.setItem(k,v); }catch(_){} };
 
 let stato = {
-  range: leggi(K.range,'max'),
+  range: leggi(K.range,'strategia'),
   da: leggi(K.da,''),
   a: leggi(K.a,''),
   capitale: leggi(K.capitale,'1') === '1',
@@ -217,6 +221,7 @@ const segno = v => v>0?'su':(v<0?'giu':'');
 function finestra(){
   if(stato.range==='date') return { from: stato.da||undefined, to: stato.a||undefined };
   if(stato.range==='max') return {};
+  if(stato.range==='strategia') return { from: INIZIO_STRATEGIA };
   const oggi = new Date();
   const d = new Date(oggi);
   if(stato.range==='1m') d.setMonth(d.getMonth()-1);
@@ -317,13 +322,13 @@ function disegna(){
   const st = d.statistiche || {};
   const c = dettaglio ? d.account : null;
   const v = dettaglio ? {
-    profitto: c.profit, saldo: c.balance, equity: c.equity,
-    equitySuSaldo: c.equityPct, drawdown: c.drawdownPct,
+    profitto: c.profittoPeriodo, saldo: c.balance, equity: c.equity,
+    equitySuSaldo: c.equityPct, drawdown: d.maxDrawdownPct,
     flottante: c.flottante, flottantePct: c.flottantePct,
     swap: c.interest, swapAperto: c.swapAperto, swapApertoPct: c.swapApertoPct,
     aperte: c.quanteAperte
   } : {
-    profitto: st.profitto, saldo: st.saldo, equity: st.equity,
+    profitto: st.profittoPeriodo, saldo: st.saldo, equity: st.equity,
     equitySuSaldo: st.saldo > 0 ? st.equity / st.saldo * 100 : 0,
     drawdown: d.maxDrawdownPct,
     flottante: st.flottante, flottantePct: st.flottantePct,
@@ -334,15 +339,15 @@ function disegna(){
   $('kpi').innerHTML = [
     '<div class="gruppo">Risultato</div>',
     card('Rendimento', soldi(v.profitto,cur), pct(d.gainPct), segno(d.gainPct),
-         'crescita del saldo' + (dettaglio ? '' : ' · somma dei conti')),
+         'realizzato nel periodo · crescita del saldo'),
     card('Equity', soldi(v.equity,cur), pct(d.equityGainPct), segno(d.equityGainPct),
          'crescita dell\'equity · vale il '+nf(2).format(v.equitySuSaldo)+'% del saldo'),
     card('Saldo', soldi(v.saldo,cur), '', '',
-         dettaglio ? 'capitale sul conto' : 'somma dei conti, ai cambi BCE'),
+         'a oggi' + (dettaglio ? '' : ', somma dei conti ai cambi BCE')),
 
     '<div class="gruppo">Rischio</div>',
     card('Drawdown massimo', '−'+nf(2).format(Math.abs(v.drawdown))+'%', '', 'giu',
-         dettaglio ? 'dichiarato da Myfxbook' : 'sulla curva equity combinata'),
+         'sulla curva equity del periodo scelto'),
     card('Drawdown flottante', soldi(v.flottante,cur), pct(v.flottantePct), segno(v.flottante),
          'sul saldo · ' + (v.flottante < 0 ? 'equity sotto il saldo' : 'flottante in positivo')),
 
@@ -366,14 +371,13 @@ function disegna(){
     : s => s.slice(8,10)+'/'+s.slice(5,7);
 
   const largo = innerWidth >= 620;
-  const rid = dirada(d.labels, [d.balancePct, d.equityPct, d.swapPct], largo ? 900 : 320);
+  const rid = dirada(d.labels, [d.balancePct, d.equityPct], largo ? 900 : 320);
 
   gCresc = ridisegna(gCresc,'gCresc',{
     type:'line',
     data:{ labels: rid.etichette.map(cortoLabel), datasets:[
       linea('Saldo', rid.serie[0], '#4cc2ff'),
-      linea('Equity', rid.serie[1], '#f0b429'),
-      linea('Swap', rid.serie[2], '#4ad991', true)
+      linea('Equity', rid.serie[1], '#f0b429')
     ]},
     options: opzioni(rid.etichette, v => nf(1).format(v)+'%')
   });

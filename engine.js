@@ -58,7 +58,7 @@ function compound(rets) {
  */
 function suAsse(dates, account) {
   const m = new Map(account.series.map(p => [p.date, p]));
-  const bal = [], ret = [], swap = [], ge = [], gb = [];
+  const bal = [], ret = [], swap = [], ge = [], gb = [], profit = [];
   let ultimoBal = 0, ultimoGe = null, ultimoGb = null;
   for (const d of dates) {
     const p = m.get(d);
@@ -68,6 +68,7 @@ function suAsse(dates, account) {
       if (p.gb != null) ultimoGb = p.gb;
     }
     bal.push(ultimoBal);
+    profit.push(p ? (Number(p.profit) || 0) : 0);
     ret.push(p ? p.balanceRet : 0);
     swap.push(p ? (p.swap || 0) : 0);
     ge.push(ultimoGe);
@@ -93,7 +94,7 @@ function suAsse(dates, account) {
   });
   const retSaldo = passo(gb, ret);
   const retEquity = passo(ge, retSaldo);
-  return { bal, ret, swap, ge, gb, retSaldo, retEquity, anomalie,
+  return { bal, ret, swap, ge, gb, profit, retSaldo, retEquity, anomalie,
            cum: compound(retSaldo),
            dichiarata: gb.some(v => v != null) };
 }
@@ -210,6 +211,13 @@ function buildHome(accounts, opts = {}) {
     saldo: somma('balance'), equity: somma('equity'),
     flottante: somma('flottante')
   };
+  /* Profitto realizzato nel periodo scelto: somma dei profit giornalieri
+     dichiarati da Myfxbook. Il campo profit del conto e' invece da sempre, e
+     mostrarlo accanto a un rendimento di periodo fa sembrare sbagliato uno
+     dei due. */
+  statistiche.profittoPeriodo = round2(parti.reduce((t, p) =>
+    t + toEur(p.c.profit.reduce((x, y) => x + y, 0), p.a.currency), 0));
+
   statistiche.flottantePct = statistiche.saldo > 0
     ? round2(statistiche.flottante / statistiche.saldo * 100) : 0;
 
@@ -274,6 +282,7 @@ function buildHome(accounts, opts = {}) {
         drawdownPct: round2(Number(p.a.drawdownPct) || 0),
         profit: round2(Number(p.a.profit) || 0),
         interest: round2(Number(p.a.interest) || 0),
+        profittoPeriodo: round2(p.c.profit.reduce((x, y) => x + y, 0)),
         deposits: round2(Number(p.a.deposits) || 0),
         withdrawals: round2(Number(p.a.withdrawals) || 0),
         flottante: round2(Number(p.a.flottante) || 0),
@@ -309,6 +318,7 @@ function buildAccount(account, opts = {}) {
   return Object.assign(h, {
     account: {
       id: account.id, name: account.name, currency: account.currency,
+      profittoPeriodo: h.accounts[0] ? h.accounts[0].profittoPeriodo : 0,
       balance: round2(account.balance),
       equity: round2(account.equity != null ? account.equity : account.balance),
       gainPct: round2(Number(account.gainPct) || 0),
