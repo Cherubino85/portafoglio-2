@@ -34,6 +34,16 @@ async function home({ from, to, force } = {}) {
   return out;
 }
 
+/** Riferisce a che punto si rompe il collegamento a Myfxbook. */
+async function diagnostica() {
+  const cred = credenziali();
+  if (!cred) return { passi: [{ passo: 'credenziali', esito: 'assenti',
+    messaggio: 'MYFXBOOK_EMAIL e MYFXBOOK_PASSWORD non sono nelle variabili d\'ambiente' }] };
+  const out = await mfx.verifica(cred.email, cred.password);
+  out.momento = new Date().toISOString();
+  return out;
+}
+
 async function account(id, { from, to, force } = {}) {
   const [lista, rates] = await Promise.all([conti(force), mfx.cambi()]);
   const c = lista.find(x => String(x.id) === String(id));
@@ -96,4 +106,4 @@ function dimostrativi() {
   ];
 }
 
-module.exports = { home, account, conti, dimostrativi, credenziali };
+module.exports = { home, account, conti, dimostrativi, credenziali, diagnostica };

@@ -15,6 +15,10 @@ const server = http.createServer(async (req, res) => {
   const q = Object.fromEntries(url.searchParams);
   if (url.pathname.startsWith('/api/')) {
     try {
+      if (q.diagnostica === '1') {
+        res.writeHead(200, {'content-type':'application/json; charset=utf-8'});
+        return res.end(JSON.stringify(await dati.diagnostica()));
+      }
       const out = q.id
         ? await dati.account(q.id, { from:q.from, to:q.to, force:q.force==='1' })
         : await dati.home({ from:q.from, to:q.to, force:q.force==='1' });

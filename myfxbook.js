@@ -9,8 +9,12 @@
  *    va ricostruita come balance + floatingPL. Myfxbook espone gia' la propria
  *    curva equity nel campo growthEquity (percentuale cumulata). Si usa quello.
  *
- * La sessione Myfxbook e' legata all'IP: si fa login a ogni richiesta e la si
- * usa subito, quindi l'IP variabile del serverless non e' un problema.
+ * 3. La sessione Myfxbook e' fragile. Myfxbook invalida le sessioni precedenti
+ *    quando lo stesso account rifa' il login, e non gradisce l'uso in
+ *    parallelo della stessa sessione. Percio' qui: la sessione si tiene e si
+ *    riusa, le richieste sono SEQUENZIALI, a ogni "Invalid session" si rifa'
+ *    il login UNA volta e si riprova, e non si fa mai logout — chiuderebbe
+ *    una sessione che un'altra chiamata potrebbe star usando.
  */
 
 const BASE = 'https://www.myfxbook.com/api';
@@ -28,15 +32,39 @@ async function chiama(path, params = {}) {
 
 async function login(email, password) {
   const j = await chiama('login', { email, password });
-  if (!j.session) throw new Error('Myfxbook: login senza sessione');
+  if (!j.session) throw new Error('Myfxbook: login riuscito ma senza sessione');
   return j.session;
 }
-const logout = (session) => chiama('logout', { session }).catch(() => {});
 const listaConti = (session) => chiama('get-my-accounts', { session }).then(j => j.accounts || []);
 const serieGiornaliera = (session, id, start, end) =>
   chiama('get-data-daily', { session, id, start, end }).then(j => j.dataDaily || []);
 const storico = (session, id) =>
   chiama('get-history', { session, id }).then(j => j.history || []);
+
+/* ---------- gestione della sessione ---------- */
+
+const DURATA_SESSIONE = 25 * 60e3;    // sotto la scadenza dichiarata da Myfxbook
+let sessione = { valore: null, t: 0 };
+const sessioneScaduta = (e) => /invalid session|session.*not.*valid/i.test((e && e.message) || '');
+
+async function prendiSessione(email, password, forza) {
+  if (!forza && sessione.valore && Date.now() - sessione.t < DURATA_SESSIONE)
+    return sessione.valore;
+  const s = await login(email, password);
+  sessione = { valore: s, t: Date.now() };
+  return s;
+}
+
+/** Esegue una chiamata; se la sessione risulta caduta, rifa' il login e riprova. */
+async function conSessione(email, password, azione) {
+  try {
+    return await azione(await prendiSessione(email, password));
+  } catch (e) {
+    if (!sessioneScaduta(e)) throw e;
+    sessione = { valore: null, t: 0 };
+    return await azione(await prendiSessione(email, password, true));
+  }
+}
 
 /* ---------- normalizzazione ---------- */
 
@@ -141,25 +169,47 @@ async function cambi() {
 
 /* ---------- raccolta completa ---------- */
 
-/** Scarica tutto il necessario e restituisce i conti gia' normalizzati. */
+/** Scarica tutto, una richiesta alla volta, e restituisce i conti normalizzati. */
 async function raccogli({ email, password, start, end }) {
-  const session = await login(email, password);
+  const conti = await conSessione(email, password, s => listaConti(s));
+  const out = [];
+  for (let i = 0; i < conti.length; i++) {
+    const c = conti[i];
+    const daily = await conSessione(email, password,
+      s => serieGiornaliera(s, c.id, start, end)).catch(() => []);
+    const hist = await conSessione(email, password,
+      s => storico(s, c.id)).catch(() => []);
+    out.push(normalize(c, daily, hist, i));
+  }
+  return out;
+}
+
+/** Prova i passi uno per uno e riferisce dove si rompe. Serve alla diagnosi. */
+async function verifica(email, password) {
+  const passi = [];
+  let s;
   try {
-    const conti = await listaConti(session);
-    const out = [];
-    for (let i = 0; i < conti.length; i++) {
-      const c = conti[i];
-      const [daily, hist] = await Promise.all([
-        serieGiornaliera(session, c.id, start, end).catch(() => []),
-        storico(session, c.id).catch(() => [])
-      ]);
-      out.push(normalize(c, daily, hist, i));
+    s = await login(email, password);
+    passi.push({ passo: 'login', esito: 'ok', sessione: String(s).slice(0, 6) + '\u2026' });
+  } catch (e) {
+    passi.push({ passo: 'login', esito: 'errore', messaggio: e.message });
+    return { passi };
+  }
+  try {
+    const conti = await listaConti(s);
+    passi.push({ passo: 'get-my-accounts', esito: 'ok', quanti: conti.length,
+                 conti: conti.map(c => ({ id: c.id, nome: c.name, valuta: c.currency })) });
+    if (conti[0]) {
+      const d = await serieGiornaliera(s, conti[0].id);
+      passi.push({ passo: 'get-data-daily', esito: 'ok', righe: appiattisci(d).length });
     }
-    return out;
-  } finally { await logout(session); }
+  } catch (e) {
+    passi.push({ passo: 'lettura conti', esito: 'errore', messaggio: e.message });
+  }
+  return { passi };
 }
 
 module.exports = {
-  login, logout, listaConti, serieGiornaliera, storico,
-  normalize, appiattisci, toIso, cambi, raccogli
+  login, listaConti, serieGiornaliera, storico,
+  normalize, appiattisci, toIso, cambi, raccogli, verifica, conSessione
 };
