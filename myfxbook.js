@@ -20,10 +20,19 @@
 const BASE = 'https://www.myfxbook.com/api';
 
 async function chiama(path, params = {}) {
+  const { session, ...resto } = params;
   const url = new URL(`${BASE}/${path}.json`);
-  for (const [k, v] of Object.entries(params))
+  for (const [k, v] of Object.entries(resto))
     if (v != null && v !== '') url.searchParams.set(k, v);
-  const r = await fetch(url, { headers: { accept: 'application/json' } });
+
+  /* La sessione va attaccata GREZZA, senza codifica, e per ultima.
+     Myfxbook non decodifica questo parametro: confronta la stringa come
+     arriva. Codificarla (il '+' che diventa '%2B', per esempio) produce
+     "Invalid session" istantaneo, con il login appena riuscito. */
+  let indirizzo = url.toString();
+  if (session) indirizzo += (indirizzo.includes('?') ? '&' : '?') + 'session=' + session;
+
+  const r = await fetch(indirizzo, { headers: { accept: 'application/json' } });
   if (!r.ok) throw new Error(`Myfxbook ${path}: HTTP ${r.status}`);
   const j = await r.json();
   if (j.error) throw new Error(`Myfxbook ${path}: ${j.message || 'errore'}`);
@@ -184,62 +193,33 @@ async function raccogli({ email, password, start, end }) {
   return out;
 }
 
-/**
- * Prova diversi modi di usare la sessione e riferisce quale funziona.
- * Un solo login, poi la stessa sessione usata in quattro modi: cosi' si
- * isola la causa invece di indovinarla.
- */
+/** Prova i passi uno per uno e riferisce dove si rompe. */
 async function verifica(email, password) {
-  const esiti = [];
-  const UA = { accept: 'application/json',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36' };
-
+  const passi = [];
   let s;
   try {
     s = await login(email, password);
-    esiti.push({ prova: 'login', esito: 'ok',
-      inizio: String(s).slice(0, 6) + '\u2026', lunghezza: String(s).length,
-      caratteriDaCodificare: /[^A-Za-z0-9._~-]/.test(String(s)) });
+    passi.push({ passo: 'login', esito: 'ok', lunghezzaSessione: String(s).length });
   } catch (e) {
-    esiti.push({ prova: 'login', esito: 'errore', messaggio: e.message });
-    return { esiti, momento: new Date().toISOString() };
+    passi.push({ passo: 'login', esito: 'errore', messaggio: e.message });
+    return { passi, momento: new Date().toISOString() };
   }
-
-  const leggi = async (nome, url, headers) => {
-    try {
-      const r = await fetch(url, { headers: headers || { accept: 'application/json' } });
-      if (!r.ok) { esiti.push({ prova: nome, esito: 'errore', messaggio: 'HTTP ' + r.status }); return; }
-      const j = await r.json();
-      esiti.push(j.error
-        ? { prova: nome, esito: 'errore', messaggio: j.message }
-        : { prova: nome, esito: 'ok', conti: (j.accounts || []).length,
-            nomi: (j.accounts || []).map(c => c.name) });
-    } catch (e) { esiti.push({ prova: nome, esito: 'eccezione', messaggio: e.message }); }
-  };
-
-  const u = new URL(`${BASE}/get-my-accounts.json`);
-  u.searchParams.set('session', s);
-  await leggi('sessione come parametro codificato', u.toString());
-  await leggi('sessione concatenata grezza', `${BASE}/get-my-accounts.json?session=${s}`);
-  await leggi('sessione con encodeURIComponent',
-    `${BASE}/get-my-accounts.json?session=${encodeURIComponent(s)}`);
-  await leggi('sessione grezza con intestazioni da browser',
-    `${BASE}/get-my-accounts.json?session=${s}`, UA);
-
-  // la stessa sessione dopo un'attesa: distingue "nasce morta" da "muore subito"
-  await new Promise(r => setTimeout(r, 2000));
-  await leggi('stessa sessione dopo 2 secondi', `${BASE}/get-my-accounts.json?session=${s}`);
-
-  // sessione nuova usata all'istante
   try {
-    const s2 = await login(email, password);
-    await leggi('sessione nuova usata subito', `${BASE}/get-my-accounts.json?session=${s2}`);
-    esiti.push({ prova: 'le due sessioni sono uguali', esito: String(s) === String(s2) ? 'si' : 'no' });
+    const conti = await listaConti(s);
+    passi.push({ passo: 'get-my-accounts', esito: 'ok', quanti: conti.length,
+      conti: conti.map(c => ({ id: c.id, nome: c.name, valuta: c.currency,
+        saldo: c.balance, guadagno: c.gain, drawdown: c.drawdown })) });
+    if (conti[0]) {
+      const d = appiattisci(await serieGiornaliera(s, conti[0].id));
+      passi.push({ passo: 'get-data-daily', esito: 'ok', righe: d.length,
+        prima: d[0] && d[0].date, ultima: d[d.length - 1] && d[d.length - 1].date });
+      const h = await storico(s, conti[0].id);
+      passi.push({ passo: 'get-history', esito: 'ok', operazioni: (h || []).length });
+    }
   } catch (e) {
-    esiti.push({ prova: 'secondo login', esito: 'errore', messaggio: e.message });
+    passi.push({ passo: 'lettura dati', esito: 'errore', messaggio: e.message });
   }
-
-  return { esiti, momento: new Date().toISOString() };
+  return { passi, momento: new Date().toISOString() };
 }
 
 module.exports = {
