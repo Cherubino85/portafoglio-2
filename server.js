@@ -15,6 +15,10 @@ const server = http.createServer(async (req, res) => {
   const q = Object.fromEntries(url.searchParams);
   if (url.pathname.startsWith('/api/')) {
     try {
+      if (q.campi === '1') {
+        res.writeHead(200, {'content-type':'application/json; charset=utf-8'});
+        return res.end(JSON.stringify(await dati.campi()));
+      }
       if (q.diagnostica === '1') {
         res.writeHead(200, {'content-type':'application/json; charset=utf-8'});
         return res.end(JSON.stringify(await dati.diagnostica()));

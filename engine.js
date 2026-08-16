@@ -144,7 +144,10 @@ function buildHome(accounts, opts = {}) {
     maxDrawdownPct = dd;
   }
 
-  /* Attribuzione mensile: guadagno in EUR di ogni conto, mese per mese. */
+  /* Guadagno mensile.
+   * Due letture insieme: la percentuale del mese sul portafoglio combinato
+   * (e' quella che Myfxbook mostra in Monthly Analytics) e il contributo in
+   * euro di ciascun conto, per sapere da dove e' arrivata. */
   const mesi = [];
   const indexOfMonth = new Map();
   dates.forEach((d, i) => {
@@ -153,17 +156,38 @@ function buildHome(accounts, opts = {}) {
     else indexOfMonth.get(k).last = i;
   });
   for (const [k, { first, last }] of indexOfMonth) {
-    const riga = { mese: k, etichetta: etichettaMese(k), conti: {}, totale: 0 };
+    const riga = { mese: k, anno: Number(k.slice(0, 4)),
+                   etichetta: etichettaMese(k), etichettaBreve: MESI[Number(k.slice(5, 7)) - 1],
+                   conti: {}, totale: 0, pct: 0 };
+    let prima = 0, dopo = 0;
     for (const p of parts) {
-      const prima = first > 0 ? p.c.balance[first - 1] : p.c.balance[first];
-      const dopo = p.c.balance[last];
-      const g = p.inizialeEur * (dopo - prima);
+      const a = first > 0 ? p.c.balance[first - 1] : p.c.balance[first];
+      const b = p.c.balance[last];
+      const g = p.inizialeEur * (b - a);
       riga.conti[p.a.name] = round2(g);
       riga.totale += g;
+      prima += p.inizialeEur * a;
+      dopo += p.inizialeEur * b;
     }
     riga.totale = round2(riga.totale);
+    riga.pct = prima > 0 ? round2((dopo / prima - 1) * 100) : 0;
     mesi.push(riga);
   }
+  mesi.sort((a, b) => a.mese < b.mese ? -1 : 1);
+  const anni = [...new Set(mesi.map(m => m.anno))].sort();
+
+  /* Somme delle statistiche dichiarate da Myfxbook, convertite in euro.
+     Non sono ricalcolate: sono le loro, sommate. */
+  const somma = (campo) => round2(parts.reduce(
+    (t, p) => t + toEur(Number(p.a[campo]) || 0, p.a.currency), 0));
+  const statistiche = {
+    profitto: somma('profit'),
+    swap: somma('interest'),
+    versamenti: somma('deposits'),
+    prelievi: somma('withdrawals'),
+    saldo: somma('balance'),
+    equity: somma('equity')
+  };
 
   const capitaleEur = parts.reduce(
     (s, p) => s + toEur(p.a.equity != null ? p.a.equity : p.a.balance, p.a.currency), 0);
@@ -180,6 +204,8 @@ function buildHome(accounts, opts = {}) {
     capitaleEur: round2(capitaleEur),
     maxDrawdownPct: round2(maxDrawdownPct),
     monthly: mesi,
+    anni,
+    statistiche,
     accounts: parts.map(p => ({
       id: p.a.id,
       name: p.a.name,
@@ -191,7 +217,13 @@ function buildHome(accounts, opts = {}) {
               / (capitaleEur || 1) * 100),
       gainPct: round2((p.finale - 1) * 100),
       gainTotalePct: round2(Number(p.a.gainPct) || 0),
-      drawdownPct: round2(Number(p.a.drawdownPct) || 0)
+      absGainPct: round2(Number(p.a.absGainPct) || 0),
+      drawdownPct: round2(Number(p.a.drawdownPct) || 0),
+      equityPct: round2(Number(p.a.equityPct) || 0),
+      profit: round2(Number(p.a.profit) || 0),
+      interest: round2(Number(p.a.interest) || 0),
+      deposits: round2(Number(p.a.deposits) || 0),
+      withdrawals: round2(Number(p.a.withdrawals) || 0)
     })),
     from: dates[0], to: dates[dates.length - 1], vuoto: false
   };
@@ -210,7 +242,16 @@ function buildAccount(account, opts = {}) {
       balance: round2(account.balance),
       equity: round2(account.equity != null ? account.equity : account.balance),
       gainPct: round2(Number(account.gainPct) || 0),
-      drawdownPct: round2(Number(account.drawdownPct) || 0)
+      absGainPct: round2(Number(account.absGainPct) || 0),
+      equityPct: round2(Number(account.equityPct) || 0),
+      drawdownPct: round2(Number(account.drawdownPct) || 0),
+      profit: round2(Number(account.profit) || 0),
+      interest: round2(Number(account.interest) || 0),
+      deposits: round2(Number(account.deposits) || 0),
+      withdrawals: round2(Number(account.withdrawals) || 0),
+      dailyPct: round2(Number(account.dailyPct) || 0),
+      monthlyPct: round2(Number(account.monthlyPct) || 0),
+      primaOperazione: account.primaOperazione || null
     },
     swapValuta: swapCumulato,
     swapTotaleValuta: swapCumulato.length ? swapCumulato[swapCumulato.length - 1] : 0

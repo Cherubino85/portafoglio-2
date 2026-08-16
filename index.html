@@ -53,7 +53,9 @@
 
   .date{display:none;gap:8px;padding-bottom:12px}
   .date.on{display:flex}
-  .date input{flex:1;font:inherit;font-size:13px;padding:8px 10px;border-radius:10px;
+  .campoData{flex:1;font-size:11px;color:var(--ink3);text-transform:uppercase;
+    letter-spacing:.06em;display:block}
+  .date input{width:100%;margin-top:5px;font:inherit;font-size:13px;padding:8px 10px;border-radius:10px;
     background:var(--panel);color:var(--ink);border:1px solid var(--line);color-scheme:dark}
 
   .kpi{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:14px}
@@ -130,8 +132,8 @@
     <button class="chip" data-r="date">Date…</button>
   </div>
   <div class="date" id="date">
-    <input type="date" id="da" aria-label="Data iniziale">
-    <input type="date" id="a" aria-label="Data finale">
+    <label class="campoData">Dal<input type="date" id="da" aria-label="Data iniziale"></label>
+    <label class="campoData">Al<input type="date" id="a" aria-label="Data finale"></label>
   </div>
 
   <div id="avvisi"></div>
@@ -151,7 +153,8 @@
 
   <section id="secMensile">
     <h2>Guadagno mensile</h2>
-    <p class="desc">Quanto ha prodotto ogni conto, mese per mese, convertito in euro.</p>
+    <p class="desc">La percentuale prodotta in ogni mese. Tocca l'anno per cambiarlo.</p>
+    <div class="chips" id="anni"></div>
     <div class="box"><canvas id="gMens"></canvas></div>
   </section>
 
@@ -172,6 +175,8 @@ const $ = id => document.getElementById(id);
 
 /* Chiavi di memoria con prefisso proprio: sullo stesso dominio puo' vivere
    un'altra app (il simulatore) e le chiavi generiche si sovrascriverebbero. */
+const MESI_BREVI = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic'];
+let annoAttivo = 0;
 const K = { range:'pf:range', da:'pf:da', a:'pf:a', capitale:'pf:capitale' };
 const leggi = (k,d) => { try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(_){ return d; } };
 const scrivi = (k,v) => { try{ localStorage.setItem(k,v); }catch(_){} };
@@ -287,27 +292,42 @@ function disegna(){
   $('indietro').hidden = !dettaglio;
   $('titolo').textContent = dettaglio ? d.account.name : 'Portafoglio';
   $('secConti').classList.toggle('nascosto', dettaglio);
-  $('secMensile').classList.toggle('nascosto', dettaglio);
 
-  const capitaleEt = dettaglio ? 'Equity del conto' : 'Capitale totale';
-  const capitaleVal = dettaglio ? soldi(d.account.equity,cur) : soldi(d.capitaleEur,'EUR');
-  const swapEt = dettaglio ? 'Swap incassato' : 'Incidenza dello swap';
-  const swapVal = dettaglio ? soldi(d.swapTotaleValuta,cur) : pct(d.swapPctFinale);
-  const swapSotto = dettaglio
-    ? 'nel periodo, valuta del conto'
-    : 'del capitale iniziale, pari a ' + soldi(d.swapEur,'EUR');
-
-  $('kpi').innerHTML = [
-    card('Rendimento', pct(d.gainPct), segno(d.gainPct),
-         'saldo realizzato nel periodo'),
-    card('Equity', pct(d.equityGainPct), segno(d.equityGainPct),
-         'flottante incluso'),
-    card('Drawdown massimo', '−'+nf(2).format(Math.abs(d.maxDrawdownPct))+'%', 'giu',
-         dettaglio ? 'dichiarato da Myfxbook' : 'sulla curva equity combinata'),
-    card(capitaleEt, capitaleVal, '', dettaglio ? 'saldo '+soldi(d.account.balance,cur)
-         : 'convertito ai cambi BCE'),
-    card(swapEt, swapVal, dettaglio?'su':'', swapSotto)
-  ].join('');
+  /* Le statistiche del conto sono quelle DICHIARATE da Myfxbook, passate
+     cosi' come sono: e' l'unico modo perche' coincidano con il loro sito.
+     Il rendimento del periodo, che dipende dall'intervallo scelto qui, e'
+     tenuto separato e detto esplicitamente. */
+  if (dettaglio) {
+    const c = d.account;
+    $('kpi').innerHTML = [
+      card('Rendimento', pct(c.gainPct), segno(c.gainPct), 'Gain, da Myfxbook'),
+      card('Rendimento assoluto', pct(c.absGainPct), segno(c.absGainPct), 'Abs. Gain'),
+      card('Drawdown', '−'+nf(2).format(Math.abs(c.drawdownPct))+'%', 'giu', 'da Myfxbook'),
+      card('Nel periodo', pct(d.gainPct), segno(d.gainPct), 'solo l\'intervallo scelto sopra'),
+      card('Saldo', soldi(c.balance,cur), '', 'balance'),
+      card('Equity', soldi(c.equity,cur), '',
+           nf(2).format(c.equityPct)+'% del saldo'),
+      card('Profitto', soldi(c.profit,cur), segno(c.profit), 'profit'),
+      card('Swap incassato', soldi(c.interest,cur), 'su',
+           c.profit ? nf(1).format(c.interest/c.profit*100)+'% del profitto' : 'interest'),
+      card('Versamenti', soldi(c.deposits,cur), '', 'deposits'),
+      card('Prelievi', soldi(c.withdrawals,cur), '', 'withdrawals')
+    ].join('');
+  } else {
+    const st = d.statistiche || {};
+    $('kpi').innerHTML = [
+      card('Rendimento combinato', pct(d.gainPct), segno(d.gainPct), 'saldo, nel periodo scelto'),
+      card('Equity', pct(d.equityGainPct), segno(d.equityGainPct), 'flottante incluso'),
+      card('Drawdown massimo', '−'+nf(2).format(Math.abs(d.maxDrawdownPct))+'%', 'giu',
+           'sulla curva equity combinata'),
+      card('Capitale totale', soldi(d.capitaleEur,'EUR'), '', 'equity ai cambi BCE'),
+      card('Profitto', soldi(st.profitto,'EUR'), segno(st.profitto), 'somma dei conti'),
+      card('Swap incassato', soldi(st.swap,'EUR'), 'su',
+           st.profitto ? nf(1).format(st.swap/st.profitto*100)+'% del profitto' : 'somma dei conti'),
+      card('Versamenti', soldi(st.versamenti,'EUR'), '', 'somma dei conti'),
+      card('Prelievi', soldi(st.prelievi,'EUR'), '', 'somma dei conti')
+    ].join('');
+  }
 
   const cortoLabel = s => s.slice(8,10)+'/'+s.slice(5,7);
   const etichette = d.labels.map(cortoLabel);
@@ -322,7 +342,7 @@ function disegna(){
     options: opzioni(d.labels, v => nf(1).format(v)+'%')
   });
 
-  if(!dettaglio) disegnaMensile(d);
+  disegnaMensile(d);
   aggiornaConti(d);
   $('pie').textContent = d.aggiornato
     ? 'Aggiornato alle ' + new Date(d.aggiornato).toLocaleTimeString('it-IT',
@@ -366,30 +386,50 @@ function opzioni(dateIso, fmt){
 }
 
 function disegnaMensile(d){
-  const nomi = d.accounts.map(a=>a.name);
-  const colori = ['#4cc2ff','#f0b429','#a78bfa','#4ad991'];
-  const ds = nomi.map((n,i)=>({
-    label:n, data:d.monthly.map(m=>m.conti[n]||0),
-    backgroundColor:colori[i%colori.length], borderRadius:4, borderSkipped:false, stack:'g'
-  }));
-  const et = d.monthly.map(m=>m.etichetta);
+  const anni = d.anni || [];
+  if(!anni.length){ $('anni').innerHTML=''; return; }
+  if(!anni.includes(annoAttivo)) annoAttivo = anni[anni.length-1];
+
+  $('anni').innerHTML = anni.map(a =>
+    '<button class="chip" data-anno="'+a+'" aria-pressed="'+(a===annoAttivo)+'">'+a+'</button>'
+  ).join('');
+
+  const delMese = {};
+  for(const m of d.monthly) if(m.anno===annoAttivo) delMese[Number(m.mese.slice(5,7))] = m;
+  const etichette = MESI_BREVI;
+  const valori = etichette.map((_,i)=> delMese[i+1] ? delMese[i+1].pct : null);
+  const euro   = etichette.map((_,i)=> delMese[i+1] ? delMese[i+1].totale : null);
+
   gMens = ridisegna(gMens,'gMens',{
     type:'bar',
-    data:{ labels:et, datasets:ds },
-    options: Object.assign(opzioni(et, v => stato.capitale ? nf(0).format(v)+' €' : '•••'), {
-      scales:{
-        x:{ stacked:true, grid:{display:false}, ticks:{color:'#5f6d7e',maxTicksLimit:8,
-            font:{size:10.5}}, border:{color:'#232c37'} },
-        y:{ stacked:true, grid:{color:'#1c242e'}, ticks:{color:'#5f6d7e',font:{size:10.5},
-            callback: v => stato.capitale ? nf(0).format(v) : '•••' }, border:{display:false} }
-      },
-      plugins:{ legend:{ display:true, labels:{ color:'#94a3b4', boxWidth:9, boxHeight:9,
-          usePointStyle:true, pointStyle:'rectRounded', font:{size:11} } },
+    data:{ labels:etichette, datasets:[{
+      label:'Guadagno del mese',
+      data:valori,
+      backgroundColor: valori.map(v => v==null ? '#1b222b' : (v>=0 ? '#4cc2ff' : '#f4544c')),
+      borderRadius:4, borderSkipped:false
+    }]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      animation:{duration:(window.matchMedia?window.matchMedia('(prefers-reduced-motion: reduce)').matches:false)?0:350},
+      plugins:{ legend:{display:false},
         tooltip:{ backgroundColor:'#1b222b', borderColor:'#2e3a48', borderWidth:1,
-          titleColor:'#e8edf4', bodyColor:'#c8d3e0', padding:10,
-          callbacks:{ label: c => ' '+c.dataset.label+'  '+
-            (stato.capitale ? nf(0).format(c.parsed.y)+' €' : '•••') } } }
-    })
+          titleColor:'#e8edf4', bodyColor:'#c8d3e0', padding:10, displayColors:false,
+          callbacks:{
+            title: it => etichette[it[0].dataIndex] + ' ' + annoAttivo,
+            label: c => {
+              const v = c.parsed.y;
+              if(v==null) return ' nessuna operazione';
+              const e = euro[c.dataIndex];
+              return ' ' + (v>0?'+':'') + nf(2).format(v) + '%' +
+                (stato.capitale && e!=null ? '   ' + nf(0).format(e) + ' €' : '');
+            } } } },
+      scales:{
+        x:{ grid:{display:false}, ticks:{color:'#5f6d7e',font:{size:10.5}},
+            border:{color:'#232c37'} },
+        y:{ grid:{color:'#1c242e'}, ticks:{color:'#5f6d7e',font:{size:10.5},
+            callback: v => nf(1).format(v)+'%' }, border:{display:false} }
+      }
+    }
   });
 }
 
@@ -434,6 +474,11 @@ $('occhio').addEventListener('click', ()=>{
   scrivi(K.capitale, stato.capitale?'1':'0');
   aggiornaOcchio();
   if(stato.dati) disegna();
+});
+$('anni').addEventListener('click', e=>{
+  const b = e.target.closest('.chip'); if(!b) return;
+  annoAttivo = Number(b.dataset.anno);
+  if(stato.dati) disegnaMensile(stato.dati);
 });
 $('ricarica').addEventListener('click', ()=> carica(true));
 $('indietro').addEventListener('click', ()=>{ stato.conto=null; stato.dati=null;

@@ -144,14 +144,29 @@ function normalize(conto, dataDaily, history, idx = 0) {
     if (Number.isFinite(ge)) prevGe = ge;
   }
 
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+
   return {
     id: String(conto.id != null ? conto.id : idx + 1),
     name: conto.name || `Conto ${idx + 1}`,
     currency: conto.currency || 'EUR',
-    balance: Number(conto.balance) || 0,
-    equity: Number(conto.equity) || Number(conto.balance) || 0,
-    gainPct: Number(conto.gain) || 0,
-    drawdownPct: Number(conto.drawdown) || 0,
+    balance: n(conto.balance),
+    equity: n(conto.equity) || n(conto.balance),
+    gainPct: n(conto.gain),
+    drawdownPct: n(conto.drawdown),
+    /* Statistiche dichiarate da Myfxbook. Si passano cosi' come sono: sono la
+       fonte, e ricalcolarle per conto proprio e' esattamente il modo di
+       ritrovarsi numeri che non coincidono con quelli del loro sito. */
+    absGainPct: n(conto.absGain),
+    equityPct: n(conto.equityPercent),
+    profit: n(conto.profit),
+    interest: n(conto.interest),
+    deposits: n(conto.deposits),
+    withdrawals: n(conto.withdrawals),
+    dailyPct: n(conto.daily),
+    monthlyPct: n(conto.monthly),
+    primaOperazione: toIso(conto.firstTradeDate),
+    aggiornatoIl: toIso(conto.lastUpdateDate),
     series
   };
 }
@@ -241,7 +256,27 @@ async function verifica(email, password) {
   return { passi, momento: new Date().toISOString() };
 }
 
+/** Elenca i campi che Myfxbook restituisce davvero, per non doverli indovinare. */
+async function campi(email, password) {
+  const s = await login(email, password);
+  const conti = await listaConti(s);
+  if (!conti.length) return { errore: 'nessun conto' };
+  const c = conti[0];
+  const da = toIso(c.firstTradeDate) || '2010-01-01';
+  const a = new Date().toISOString().slice(0, 10);
+  const righe = appiattisci(await serieGiornaliera(s, c.id, da, a));
+  const storia = await storico(s, c.id).catch(() => []);
+  return {
+    campiDelConto: Object.keys(c),
+    campiGiornalieri: righe[0] ? Object.keys(righe[0]) : [],
+    esempioGiornaliero: righe[Math.floor(righe.length / 2)] || null,
+    campiOperazione: storia[0] ? Object.keys(storia[0]) : [],
+    quanteRighe: righe.length,
+    quanteOperazioni: storia.length
+  };
+}
+
 module.exports = {
   login, listaConti, serieGiornaliera, storico,
-  normalize, appiattisci, toIso, cambi, raccogli, verifica, conSessione
+  normalize, appiattisci, toIso, cambi, raccogli, verifica, campi, conSessione
 };

@@ -44,6 +44,13 @@ async function diagnostica() {
   return out;
 }
 
+/** Elenca i campi restituiti da Myfxbook. */
+async function campi() {
+  const cred = credenziali();
+  if (!cred) return { errore: 'credenziali assenti' };
+  return await mfx.campi(cred.email, cred.password);
+}
+
 async function account(id, { from, to, force } = {}) {
   const [lista, rates] = await Promise.all([conti(force), mfx.cambi()]);
   const c = lista.find(x => String(x.id) === String(id));
@@ -97,13 +104,17 @@ function dimostrativi() {
     return out;
   };
   return [
-    { id: '1', name: 'Protocollo MADRE (EUR/USD)', currency: 'EUR',
-      balance: 32180, equity: 31740, gainPct: 103.4, drawdownPct: 49.17,
-      series: serie(7, 0.0011, 0.010, 3.8) },
-    { id: '2', name: 'Protocollo CHF (GBP/CHF)', currency: 'CHF',
-      balance: 23050, equity: 22610, gainPct: 57.2, drawdownPct: 41.3,
-      series: serie(13, 0.0009, 0.012, 12.9) }
+    { id: '1', name: 'Conto dimostrativo EUR', currency: 'EUR',
+      balance: 30000, equity: 26000, gainPct: 90, absGainPct: 60, equityPct: 86.7,
+      drawdownPct: 45, profit: 15000, interest: 3500, deposits: 22000,
+      withdrawals: 10000, dailyPct: 0.05, monthlyPct: 1.5,
+      primaOperazione: '2025-06-02', series: serie(7, 0.0011, 0.010, 3.8) },
+    { id: '2', name: 'Conto dimostrativo CHF', currency: 'CHF',
+      balance: 22000, equity: 23000, gainPct: 60, absGainPct: 50, equityPct: 104.5,
+      drawdownPct: 38, profit: 7000, interest: 2800, deposits: 14000,
+      withdrawals: 0, dailyPct: 0.06, monthlyPct: 1.8,
+      primaOperazione: '2025-06-02', series: serie(13, 0.0009, 0.012, 12.9) }
   ];
 }
 
-module.exports = { home, account, conti, dimostrativi, credenziali, diagnostica };
+module.exports = { home, account, conti, dimostrativi, credenziali, diagnostica, campi };
