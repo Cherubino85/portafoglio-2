@@ -10,7 +10,7 @@
  *    e coprirebbe anche quel percorso finche' l'altro non si installa,
  *    finendo per servire la dashboard al posto del simulatore.
  */
-const VERSIONE = 'portafoglio-v3';
+const VERSIONE = 'portafoglio-v4';
 const GUSCIO = [
   './', 'index.html', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png',
@@ -46,9 +46,11 @@ self.addEventListener('fetch', e => {
   const pagina = req.mode === 'navigate';
 
   if (api || pagina) {
-    // rete per prima: il dato fresco quando c'e' linea, l'ultimo salvato quando manca
+    /* Rete per prima, e per le pagine si aggira anche la cache del browser:
+       una index.html vecchia tenuta in cache fa credere che esistano due
+       versioni dell'applicazione. */
     e.respondWith(
-      fetch(req).then(r => {
+      fetch(pagina ? new Request(req, { cache: 'reload' }) : req).then(r => {
         const copia = r.clone();
         caches.open(VERSIONE).then(c => c.put(req, copia)).catch(() => {});
         return r;

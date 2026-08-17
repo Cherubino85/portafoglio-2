@@ -19,6 +19,17 @@
 
 # Il service worker non deve mai arrivare da cache di edge: e' il file che
 # decide il comportamento di tutto il resto.
+# L'HTML non va mai tenuto in cache: e' il file che porta tutto il resto.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache"
+
 [[headers]]
   for = "/sw.js"
   [headers.values]

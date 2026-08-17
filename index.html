@@ -50,7 +50,8 @@
   .chip{flex:none;font:inherit;font-size:12.5px;padding:10px 14px;border-radius:999px;
     min-height:40px;display:flex;align-items:center;
     background:var(--panel);color:var(--ink2);border:1px solid var(--line);cursor:pointer}
-  .chip[aria-pressed="true"]{background:var(--panel2);color:var(--ink);border-color:var(--line2)}
+  .chip[aria-pressed="true"]{background:#123243;color:#8fd8ff;border-color:var(--bal);
+    font-weight:620}
   .chip:focus-visible{outline:2px solid var(--bal);outline-offset:2px}
 
   .date{display:none;gap:8px;padding-bottom:12px}
@@ -195,14 +196,20 @@ let annoAttivo = 0;
    il piu' vecchio parte dal 2016. Mescolarla falsa rendimento e drawdown, che
    finiscono per descrivere un sistema che non e' questo. */
 const INIZIO_STRATEGIA = '2023-01-01';
-const K = { range:'pf:range', da:'pf:da', a:'pf:a', capitale:'pf:capitale' };
+/* Il periodo NON viene salvato di proposito. Ricordarlo per dispositivo
+   faceva aprire il telefono su "1 mese" e il computer su "Dal 2023": stessi
+   dati, due letture diverse, e sembravano due applicazioni diverse.
+   Resta salvato solo l'occultamento del capitale, che e' una preferenza di
+   riservatezza e non cambia il significato di nessun numero. */
+const K = { capitale:'pf:capitale' };
+const VERSIONE = '2026-08-17';
 const leggi = (k,d) => { try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(_){ return d; } };
 const scrivi = (k,v) => { try{ localStorage.setItem(k,v); }catch(_){} };
 
 let stato = {
-  range: leggi(K.range,'strategia'),
-  da: leggi(K.da,''),
-  a: leggi(K.a,''),
+  range: 'strategia',
+  da: '',
+  a: '',
   capitale: leggi(K.capitale,'1') === '1',
   conto: null,
   dati: null,
@@ -384,10 +391,11 @@ function disegna(){
 
   disegnaMensile(d);
   aggiornaConti(d);
-  $('pie').textContent = d.aggiornato
-    ? 'Aggiornato alle ' + new Date(d.aggiornato).toLocaleTimeString('it-IT',
-        {hour:'2-digit',minute:'2-digit'})
-    : '—';
+  const gg = s => s ? s.slice(8,10)+'/'+s.slice(5,7)+'/'+s.slice(0,4) : '?';
+  $('pie').innerHTML =
+    '<b>Periodo: ' + (d.labels.length ? gg(d.from)+' → '+gg(d.to) : 'nessun dato') + '</b><br>' +
+    (d.aggiornato ? 'Aggiornato alle ' + new Date(d.aggiornato).toLocaleTimeString('it-IT',
+      {hour:'2-digit',minute:'2-digit'}) : '—') + ' · versione ' + VERSIONE;
 }
 
 function card(et,valore,percentuale,classe,sotto){
@@ -513,7 +521,7 @@ function aggiornaConti(d){
 /* ---------- interazioni ---------- */
 $('chips').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if(!b) return;
-  stato.range = b.dataset.r; scrivi(K.range, stato.range);
+  stato.range = b.dataset.r;
   [...$('chips').children].forEach(c=>c.setAttribute('aria-pressed', c===b ? 'true':'false'));
   $('date').classList.toggle('on', stato.range==='date');
   if(stato.range==='date' && !(stato.da && stato.a)) return;
@@ -521,7 +529,6 @@ $('chips').addEventListener('click', e => {
 });
 ['da','a'].forEach(id => $(id).addEventListener('change', ()=>{
   stato.da=$('da').value; stato.a=$('a').value;
-  scrivi(K.da,stato.da); scrivi(K.a,stato.a);
   if(stato.da && stato.a){ stato.dati=null; carica(); }
 }));
 $('occhio').addEventListener('click', ()=>{
@@ -570,8 +577,19 @@ if(q.get('conto')) stato.conto = q.get('conto');
 carica();
 
 /* installazione e uso offline */
-if('serviceWorker' in navigator)
-  navigator.serviceWorker.register('sw.js', {scope:'/'}).catch(()=>{});
+/* Senza questo il telefono puo' restare per giorni su una copia vecchia
+   mentre il computer ha gia' quella nuova: stesso indirizzo, due versioni. */
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js', {scope:'/'})
+    .then(reg => { reg.update(); setInterval(()=>reg.update(), 15*60e3); })
+    .catch(()=>{});
+  let ricaricato = false;
+  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+    if(ricaricato) return;
+    ricaricato = true;
+    location.reload();
+  });
+}
 })();
 </script>
 </body>
