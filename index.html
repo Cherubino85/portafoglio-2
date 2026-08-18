@@ -73,7 +73,7 @@
   .card .val{font-size:clamp(16px,4.9vw,23px);font-weight:660;letter-spacing:-.02em;
     line-height:1.15}
   .card .perc{font-size:clamp(12px,3.4vw,13.5px);font-weight:600;margin-top:3px;
-    font-variant-numeric:tabular-nums}
+    color:var(--ink2);font-variant-numeric:tabular-nums}
   .card .sotto{font-size:11.5px;color:var(--ink3);margin-top:5px;line-height:1.4}
   .gruppo{grid-column:1/-1;font-size:10.5px;color:var(--ink3);font-weight:600;
     text-transform:uppercase;letter-spacing:.09em;margin:10px 0 -2px}
@@ -86,6 +86,11 @@
   .box{position:relative;height:230px}
   @media(min-width:620px){.box{height:290px}}
 
+  .torte{display:grid;grid-template-columns:1fr;gap:16px}
+  @media(min-width:620px){.torte{grid-template-columns:1fr 1fr}}
+  .torte h3{font-size:12px;margin:0 0 8px;font-weight:600;color:var(--ink2)}
+  .boxT{position:relative;height:210px}
+  .notaT{font-size:11px;color:var(--ink3);margin:9px 0 0;line-height:1.45}
   .legenda{display:flex;flex-wrap:wrap;gap:12px;margin-top:11px;font-size:11.5px;color:var(--ink2)}
   .legenda i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px}
 
@@ -173,6 +178,18 @@
     <div class="box"><canvas id="gMens"></canvas></div>
   </section>
 
+  <section id="secTorte">
+    <h2>Da dove arriva</h2>
+    <p class="desc">Quali strumenti hanno prodotto il risultato e quali stanno
+       tenendo aperto il flottante.</p>
+    <div class="torte">
+      <div><h3>Profitto</h3><div class="boxT"><canvas id="gProfitto"></canvas></div>
+        <p class="notaT" id="notaProfitto"></p></div>
+      <div><h3>Drawdown flottante</h3><div class="boxT"><canvas id="gFlottante"></canvas></div>
+        <p class="notaT" id="notaFlottante"></p></div>
+    </div>
+  </section>
+
   <section id="secConti">
     <h2>Conti</h2>
     <p class="desc">Tocca un conto per vederlo da solo.</p>
@@ -202,7 +219,7 @@ const INIZIO_STRATEGIA = '2023-01-01';
    Resta salvato solo l'occultamento del capitale, che e' una preferenza di
    riservatezza e non cambia il significato di nessun numero. */
 const K = { capitale:'pf:capitale' };
-const VERSIONE = '2026-08-17';
+const VERSIONE = '2026-08-18';
 const leggi = (k,d) => { try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(_){ return d; } };
 const scrivi = (k,v) => { try{ localStorage.setItem(k,v); }catch(_){} };
 
@@ -345,9 +362,9 @@ function disegna(){
 
   $('kpi').innerHTML = [
     '<div class="gruppo">Risultato</div>',
-    card('Rendimento', soldi(v.profitto,cur), pct(d.gainPct), segno(d.gainPct),
-         'realizzato nel periodo · crescita del saldo'),
-    card('Equity', soldi(v.equity,cur), pct(d.equityGainPct), segno(d.equityGainPct),
+    card('Rendimento', pct(d.gainPct), soldi(v.profitto,cur), segno(d.gainPct),
+         'crescita del saldo · realizzato nel periodo'),
+    card('Equity', pct(d.equityGainPct), soldi(v.equity,cur), segno(d.equityGainPct),
          'crescita dell\'equity · vale il '+nf(2).format(v.equitySuSaldo)+'% del saldo'),
     card('Saldo', soldi(v.saldo,cur), '', '',
          'a oggi' + (dettaglio ? '' : ', somma dei conti ai cambi BCE')),
@@ -366,7 +383,10 @@ function disegna(){
          v.swapAperto == null ? '—' : soldi(v.swapAperto,cur),
          v.swapAperto == null ? '' : pct(v.swapApertoPct), 'su',
          v.swapAperto == null ? 'il broker non riporta lo swap sulle posizioni aperte'
-           : 'sul saldo · ' + (v.aperte || 0) + ' posizioni ancora aperte')
+           : 'sul saldo · maturato e non ancora incassato'),
+    card('Posizioni aperte', v.aperte == null ? '—' : nf(0).format(v.aperte), '', '',
+         v.aperte == null ? 'non disponibili'
+           : 'in questo momento' + (dettaglio ? '' : ', sui due conti'))
   ].join('');
 
   /* Su periodi lunghi giorno e mese non bastano: serve l'anno, altrimenti
@@ -390,6 +410,7 @@ function disegna(){
   });
 
   disegnaMensile(d);
+  disegnaTorte(d);
   aggiornaConti(d);
   const gg = s => s ? s.slice(8,10)+'/'+s.slice(5,7)+'/'+s.slice(0,4) : '?';
   $('pie').innerHTML =
@@ -398,10 +419,10 @@ function disegna(){
       {hour:'2-digit',minute:'2-digit'}) : '—') + ' · versione ' + VERSIONE;
 }
 
-function card(et,valore,percentuale,classe,sotto){
+function card(et,grande,piccola,classe,sotto){
   return '<div class="card"><div class="et">'+et+'</div>'+
-    '<div class="val num">'+valore+'</div>'+
-    (percentuale?'<div class="perc num '+(classe||'')+'">'+percentuale+'</div>':'')+
+    '<div class="val num '+(classe||'')+'">'+grande+'</div>'+
+    (piccola?'<div class="perc num">'+piccola+'</div>':'')+
     (sotto?'<div class="sotto">'+sotto+'</div>':'')+'</div>';
 }
 
@@ -494,6 +515,54 @@ function disegnaMensile(d){
       }
     }
   });
+}
+
+let gProfitto=null, gFlottante=null;
+const COLORI_TORTA = ['#4cc2ff','#f0b429','#a78bfa','#4ad991','#f4544c','#7dd3fc','#fb923c'];
+
+function torta(vecchio, id, voci, valuta, nota, spiegazione){
+  if(!voci || !voci.length){
+    if(vecchio) vecchio.destroy();
+    $(nota).textContent = 'Dato non disponibile.';
+    return null;
+  }
+  $(nota).innerHTML = spiegazione;
+  return ridisegna(vecchio, id, {
+    type:'doughnut',
+    data:{ labels: voci.map(v=>v.simbolo),
+      datasets:[{ data: voci.map(v=>Math.abs(v.valore)),
+        backgroundColor: voci.map((_,i)=>COLORI_TORTA[i%COLORI_TORTA.length]),
+        borderColor:'#151a21', borderWidth:2 }]},
+    options:{
+      responsive:true, maintainAspectRatio:false, cutout:'58%',
+      animation:{duration:(window.matchMedia?window.matchMedia('(prefers-reduced-motion: reduce)').matches:false)?0:350},
+      plugins:{
+        legend:{ position:'bottom', labels:{ color:'#94a3b4', boxWidth:9, boxHeight:9,
+          usePointStyle:true, pointStyle:'circle', font:{size:11}, padding:12 } },
+        tooltip:{ backgroundColor:'#1b222b', borderColor:'#2e3a48', borderWidth:1,
+          titleColor:'#e8edf4', bodyColor:'#c8d3e0', padding:10, displayColors:false,
+          callbacks:{ label: c => {
+            const v = voci[c.dataIndex];
+            return ' ' + nf(2).format(v.pct) + '%' +
+              (stato.capitale ? '   ' + soldi(v.valore, valuta) : '');
+          } } }
+      }
+    }
+  });
+}
+
+function disegnaTorte(d){
+  const dettaglio = !!stato.conto;
+  const cur = dettaglio ? d.account.currency : 'EUR';
+  const st = d.statistiche || {};
+  const prof = dettaglio ? d.account.profittoPerSimbolo : st.profittoPerSimbolo;
+  const flot = dettaglio ? d.account.flottantePerSimbolo : st.flottantePerSimbolo;
+
+  gProfitto = torta(gProfitto,'gProfitto', prof, cur, 'notaProfitto',
+    'Dalle operazioni chiuse restituite da Myfxbook. Le percentuali sono sul '+
+    'totale di quelle operazioni, non sul profitto dichiarato.');
+  gFlottante = torta(gFlottante,'gFlottante', flot, cur, 'notaFlottante',
+    'Dalle posizioni aperte in questo momento: la ripartizione è completa.');
 }
 
 function ridisegna(vecchio,id,cfg){

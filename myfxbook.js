@@ -155,6 +155,28 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
 
   const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 
+  /* Profitto realizzato per simbolo, dalle operazioni chiuse. Attenzione:
+     get-history non restituisce necessariamente tutto lo storico, quindi
+     questa ripartizione copre solo cio' che Myfxbook consegna. Le percentuali
+     sono percio' calcolate sul totale visibile, non sul profitto dichiarato. */
+  const profittoPerSimbolo = {};
+  for (const op of history || []) {
+    const sim = String(op.symbol || 'altro').toUpperCase();
+    profittoPerSimbolo[sim] = (profittoPerSimbolo[sim] || 0)
+      + n(op.profit) + n(op.interest) + n(op.commission);
+  }
+
+  /* Flottante per simbolo, dalle posizioni aperte. Questa invece e' completa:
+     le posizioni aperte sono tutte quelle che ci sono. */
+  let flottantePerSimbolo = null;
+  if (Array.isArray(posizioniAperte)) {
+    flottantePerSimbolo = {};
+    for (const o of posizioniAperte) {
+      const sim = String(o.symbol || 'altro').toUpperCase();
+      flottantePerSimbolo[sim] = (flottantePerSimbolo[sim] || 0) + n(o.profit);
+    }
+  }
+
   /* Swap maturato sulle posizioni ancora aperte. Se l'endpoint non risponde
      resta null e l'interfaccia scrive "non disponibile" invece di uno zero
      che sembrerebbe un dato. */
@@ -201,6 +223,8 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
     flottante: n(conto.equity) - n(conto.balance),
     swapAperto,
     quanteAperte,
+    profittoPerSimbolo,
+    flottantePerSimbolo,
     primaOperazione: toIso(conto.firstTradeDate),
     aggiornatoIl: toIso(conto.lastUpdateDate),
     series

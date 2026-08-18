@@ -110,8 +110,14 @@ function dimostrativi() {
     return { id, name: nome, currency: valuta,
       balance: u.balance, equity: u.balance * rapporto,
       flottante,
-      swapAperto: valuta === 'EUR' ? Math.abs(flottante) * 0.18 : null,
-      quanteAperte: valuta === 'EUR' ? 14 : 9,
+      swapAperto: Math.abs(flottante) * 0.18,
+      quanteAperte: valuta === 'EUR' ? 18 : 14,
+      profittoPerSimbolo: valuta === 'EUR'
+        ? { EURUSD: profitto * 0.82, XAUUSD: profitto * 0.18 }
+        : { GBPCHF: profitto },
+      flottantePerSimbolo: valuta === 'EUR'
+        ? { EURUSD: flottante * 0.7, XAUUSD: flottante * 0.3 }
+        : { GBPCHF: flottante },
       gainPct: u.gb, absGainPct: u.gb * 0.68,
       equityPct: rapporto * 100,
       drawdownPct: valuta === 'EUR' ? 49.17 : 40.39,

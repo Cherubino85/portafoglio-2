@@ -218,6 +218,24 @@ function buildHome(accounts, opts = {}) {
   statistiche.profittoPeriodo = round2(parti.reduce((t, p) =>
     t + toEur(p.c.profit.reduce((x, y) => x + y, 0), p.a.currency), 0));
 
+  /* Ripartizione per simbolo, convertita in euro e ordinata per peso. */
+  const perSimbolo = (campo) => {
+    if (parti.some(p => !p.a[campo])) return null;
+    const m = {};
+    for (const p of parti)
+      for (const [sim, v] of Object.entries(p.a[campo] || {}))
+        m[sim] = (m[sim] || 0) + toEur(v, p.a.currency);
+    const voci = Object.entries(m)
+      .map(([simbolo, valore]) => ({ simbolo, valore: round2(valore) }))
+      .filter(v => v.valore !== 0)
+      .sort((a, b) => Math.abs(b.valore) - Math.abs(a.valore));
+    const tot = voci.reduce((t, v) => t + Math.abs(v.valore), 0);
+    return voci.map(v => Object.assign(v,
+      { pct: tot > 0 ? round2(Math.abs(v.valore) / tot * 100) : 0 }));
+  };
+  statistiche.profittoPerSimbolo = perSimbolo('profittoPerSimbolo');
+  statistiche.flottantePerSimbolo = perSimbolo('flottantePerSimbolo');
+
   statistiche.flottantePct = statistiche.saldo > 0
     ? round2(statistiche.flottante / statistiche.saldo * 100) : 0;
 
@@ -336,6 +354,8 @@ function buildAccount(account, opts = {}) {
       swapApertoPct: (account.swapAperto == null || !(account.balance > 0)) ? null
         : round2(account.swapAperto / account.balance * 100),
       quanteAperte: account.quanteAperte,
+      profittoPerSimbolo: h.statistiche.profittoPerSimbolo,
+      flottantePerSimbolo: h.statistiche.flottantePerSimbolo,
       primaOperazione: account.primaOperazione || null
     },
     swapValuta,
