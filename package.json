@@ -1,0 +1,12 @@
+{
+  "name": "portafoglio-forex",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dashboard personale dei conti MT4 via API Myfxbook, su Cloudflare Workers",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "deploy": "wrangler deploy"
+  }
+}
