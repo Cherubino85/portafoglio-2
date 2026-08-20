@@ -234,7 +234,7 @@ const INIZIO_STRATEGIA = '2023-01-01';
    Resta salvato solo l'occultamento del capitale, che e' una preferenza di
    riservatezza e non cambia il significato di nessun numero. */
 const K = { capitale:'pf:capitale' };
-const VERSIONE = '2026-08-20c';
+const VERSIONE = '2026-08-20d';
 const leggi = (k,d) => { try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(_){ return d; } };
 const scrivi = (k,v) => { try{ localStorage.setItem(k,v); }catch(_){} };
 
