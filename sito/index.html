@@ -111,8 +111,9 @@
   .conto .nome b{display:block;font-size:14px;font-weight:580;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .conto .nome{min-width:0}
-  .conto .nome span{font-size:11.5px;color:var(--ink3);display:block;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .conto .nome span{font-size:11.5px;color:var(--ink2);display:block;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  .conto .nome span.eq{color:var(--ink3);font-size:11px}
   .conto .cifre{text-align:right;flex:none}
   .conto .cifre b{display:block;font-size:15px;font-weight:640}
   .conto .cifre span{font-size:11.5px;color:var(--ink3)}
@@ -234,7 +235,7 @@ const INIZIO_STRATEGIA = '2023-01-01';
    Resta salvato solo l'occultamento del capitale, che e' una preferenza di
    riservatezza e non cambia il significato di nessun numero. */
 const K = { capitale:'pf:capitale' };
-const VERSIONE = '2026-08-21';
+const VERSIONE = '2026-08-21b';
 const leggi = (k,d) => { try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(_){ return d; } };
 const scrivi = (k,v) => { try{ localStorage.setItem(k,v); }catch(_){} };
 
@@ -687,8 +688,8 @@ function aggiornaConti(d){
     '<button class="conto" data-id="'+a.id+'">'+
       '<span class="barra" style="background:'+colori[i%colori.length]+'"></span>'+
       '<span class="nome"><b>'+a.name+'</b>'+
-        '<span>'+a.currency+' · '+nf(1).format(a.quota)+'% del capitale · '+
-        soldi(a.equity,a.currency)+'</span></span>'+
+        '<span>'+soldi(a.balance,a.currency)+' · '+nf(1).format(a.quota)+'% del capitale</span>'+
+        '<span class="eq">equity '+soldi(a.equity,a.currency)+'</span></span>'+
       '<span class="cifre"><b class="num '+segno(a.gainPct)+'">'+pct(a.gainPct)+'</b>'+
         '<span class="num">tot '+pct(a.gainTotalePct)+'</span></span>'+
       '<span class="freccia"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" '+
