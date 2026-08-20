@@ -69,7 +69,7 @@ function suAsse(dates, account, mappa) {
     bal.push(ultimoBal);
     profit.push(p ? (Number(p.profit) || 0) : 0);
     ret.push(p ? p.balanceRet : 0);
-    gain.push(p && p.gainGiorno != null ? p.gainGiorno : null);
+    gain.push(p && p.gainVal != null ? p.gainVal : null);
     swap.push(p ? (p.swap || 0) : 0);
     ge.push(ultimoGe);
     gb.push(ultimoGb);
@@ -98,14 +98,54 @@ function suAsse(dates, account, mappa) {
      3. dal profit sul saldo del giorno prima
      Con la prima fonte la curva coincide con la loro e non c'e' piu' niente
      da ricostruire — ed e' per questo che i salti anomali spariscono. */
+  /* Tre candidati per il rendimento giornaliero, in ordine di preferenza.
+   * Non si sceglie per fede: si sceglie quello che produce un cumulato
+   * PLAUSIBILE. Un conto non moltiplica per mille il proprio capitale, e una
+   * curva che lo fa e' una curva letta male, non un risultato. */
   const derivato = passo(gb, ret);
-  const retSaldo = gain.map((g, i) => g != null ? g : derivato[i]);
+  const candidati = [
+    { nome: 'get-daily-gain come cumulato', ret: passo(gain, derivato) },
+    { nome: 'get-daily-gain come passo',
+      ret: gain.map((g, i) => g != null ? g / 100 : derivato[i]) },
+    { nome: 'ricostruito dai profitti', ret: derivato }
+  ];
+  /* Il metro di paragone e' la curva ricostruita dai profitti: non e'
+     precisissima, ma e' indipendente e nell'ordine di grandezza giusto.
+     Fra le interpretazioni di get-daily-gain si sceglie quella che le somiglia
+     — cioe' quella letta nel verso giusto — e si scarta chi esce di scala. */
+  const fattore = (r) => {
+    let f = 1;
+    for (const x of r) { f *= (1 + x); if (!Number.isFinite(f)) return null; }
+    return (f > 0 && f < 1e6) ? f : null;
+  };
+  const riferimento = fattore(derivato) || 1;
+  /* Banda di tolleranza, non minima distanza: il dato di Myfxbook va preferito
+     ANCHE quando si discosta dalla mia ricostruzione — e' proprio quello lo
+     scopo. Si scarta solo chi esce dalla banda, cioe' chi e' stato letto nel
+     verso sbagliato. */
+  const gRif = riferimento - 1;                     // guadagno di riferimento
+  const dentroBanda = (f) => {
+    if (f == null || f <= 0.02 || f >= 50) return false;
+    const g = f - 1;
+    /* Se il riferimento e' quasi piatto il rapporto fra guadagni non dice
+       nulla, e si torna a confrontare i fattori. */
+    if (Math.abs(gRif) < 0.05) return f > riferimento / 2 && f < riferimento * 2;
+    if (g === 0 || Math.sign(g) !== Math.sign(gRif)) return false;
+    const rapporto = Math.abs(g / gRif);
+    return rapporto > 0.5 && rapporto < 2;
+  };
+  const scelto = (gain.some(v => v != null) ? candidati : [])
+      .map(c => ({ ...c, f: fattore(c.ret) }))
+      .find(c => dentroBanda(c.f))
+    || { nome: 'ricostruito dai profitti', ret: derivato };
+
+  const retSaldo = scelto.ret;
   const retEquity = passo(ge, retSaldo);
-  const dichiarati = gain.filter(v => v != null).length;
   return { bal, ret, swap, ge, gb, gain, profit, retSaldo, retEquity, anomalie,
            cum: compound(retSaldo),
-           dichiarati,
-           dichiarata: dichiarati > 0 };
+           fonte: scelto.nome,
+           dichiarati: gain.filter(v => v != null).length,
+           dichiarata: scelto.nome.startsWith('get-daily-gain') };
 }
 
 /**
@@ -337,9 +377,7 @@ function buildHome(accounts, opts = {}) {
 
   /* ---- controlli di coerenza, esposti invece che nascosti ---- */
   const controlli = {
-    baseCurve: parti.every(p => p.c.dichiarata)
-      ? 'guadagno giornaliero dichiarato da Myfxbook'
-      : 'in parte ricostruita dai profitti giornalieri',
+    baseCurve: [...new Set(parti.map(p => p.c.fonte))].join(' + '),
     giorniDichiarati: parti.reduce((t, p) => t + (p.c.dichiarati || 0), 0),
     passiAnomaliIgnorati: parti.reduce((t, p) => t + (p.c.anomalie || 0), 0),
     swapDaOperazioniChiuse: round2(swapEur),

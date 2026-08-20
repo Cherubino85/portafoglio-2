@@ -141,7 +141,7 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null,
   for (const r of appiattisci(dailyGain)) {
     const d = toIso(r.date);
     const v = Number(r.value);
-    if (d && Number.isFinite(v)) gainPerGiorno[d] = v / 100;
+    if (d && Number.isFinite(v)) gainPerGiorno[d] = v;   // valore grezzo, non interpretato
   }
 
   const series = [];
@@ -166,8 +166,10 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null,
       balanceRet: (prevBal && prevBal !== 0) ? profit / prevBal : 0,
       profit,
       swap: swapPerGiorno[r._iso] || 0,
-      // rendimento del giorno dichiarato da Myfxbook, quando c'e'
-      gainGiorno: (r._iso in gainPerGiorno) ? gainPerGiorno[r._iso] : null,
+      /* Valore di get-daily-gain per quel giorno, COSI' COM'E'. Che sia un
+         passo o un cumulato lo decide engine.js confrontando l'esito con il
+         rendimento dichiarato: assumerlo e' costato un numero da 40 cifre. */
+      gainVal: (r._iso in gainPerGiorno) ? gainPerGiorno[r._iso] : null,
       ge: num('growthEquity'),
       gb: num('growthBalance', 'growth', 'growthBalanceEquity')
     });
