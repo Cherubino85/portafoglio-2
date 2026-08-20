@@ -330,10 +330,21 @@ function buildHome(accounts, opts = {}) {
   statistiche.finestraIntera = interaSuTutti;
   statistiche.swapDichiarato = somma('interest');
   statistiche.swapFinestra = round2(swapFinestra);
-  statistiche.swapIncassato = interaSuTutti ? statistiche.swapDichiarato
-                                            : round2(swapFinestra);
-  statistiche.swapFonte = interaSuTutti ? 'dichiarato da Myfxbook'
-    : operazioniFinestra + ' operazioni chiuse nel periodo';
+  /* Le cifre in valuta sono SEMPRE quelle dichiarate da Myfxbook, sommate ai
+     cambi BCE. Myfxbook non espone profitto, swap, versamenti e prelievi per
+     periodo — esistono solo come totali di vita del conto. Calcolarli sul
+     campione di 50 operazioni che l'API restituisce darebbe numeri che non
+     coincidono con la loro pagina, ed e' esattamente cio' che va evitato. */
+  statistiche.swapIncassato = statistiche.swapDichiarato;
+  statistiche.swapFonte = 'totale, da Myfxbook';
+
+  /* Rendimento assoluto: profitto sui versamenti. Formula verificata sui due
+     conti — 18.258,57/26.574,31 = 68,71% e 8.147,85/15.319,06 = 53,19%,
+     identici a quanto dichiara Myfxbook. */
+  statistiche.absGainPct = statistiche.versamenti > 0
+    ? round2(statistiche.profitto / statistiche.versamenti * 100) : 0;
+  statistiche.equitySuSaldoPct = statistiche.saldo > 0
+    ? round2(statistiche.equity / statistiche.saldo * 100) : 0;
 
   /* Swap giornaliero: quanto maturano OGGI le posizioni aperte, non la media
      di quello che e' successo prima. */
