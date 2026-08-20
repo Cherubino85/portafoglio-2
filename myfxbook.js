@@ -52,6 +52,17 @@ const storico = (session, id) =>
    non ancora incassato. Lo storico contiene solo le operazioni chiuse. */
 const aperte = (session, id) =>
   chiama('get-open-trades', { session, id }).then(j => j.openTrades || []);
+/* get-daily-gain e' la serie UFFICIALE del guadagno giornaliero: composta,
+   da' la curva "Growth" che Myfxbook mostra sul proprio sito. get-data-daily
+   non espone la crescita del saldo (i suoi campi sono date, balance, pips,
+   lots, floatingPL, profit, growthEquity, floatingPips), quindi prima quella
+   curva la ricostruivo dai profitti — ed era un'approssimazione. */
+const guadagnoGiornaliero = (session, id, start, end) =>
+  chiama('get-daily-gain', { session, id, start, end }).then(j => j.dailyGain || []);
+/* get-gain restituisce il rendimento esatto fra due date: serve a controllare
+   che la curva composta qui coincida con la loro. */
+const guadagno = (session, id, start, end) =>
+  chiama('get-gain', { session, id, start, end }).then(j => Number(j.value));
 
 /* ---------- gestione della sessione ---------- */
 
@@ -110,7 +121,8 @@ function toIso(v) {
  * - equityRet : ricavato dal rapporto tra due valori cumulati di growthEquity
  * - swap      : somma del campo "interest" delle operazioni chiuse quel giorno
  */
-function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
+function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null,
+                   dailyGain = null) {
   const rows = appiattisci(dataDaily)
     .map(r => Object.assign({}, r, { _iso: toIso(r.date) }))
     .filter(r => r._iso)
@@ -122,6 +134,14 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
     if (!d) continue;
     const i = Number(op.interest);
     if (Number.isFinite(i) && i !== 0) swapPerGiorno[d] = (swapPerGiorno[d] || 0) + i;
+  }
+
+  /* Guadagno giornaliero dichiarato, indicizzato per data. */
+  const gainPerGiorno = {};
+  for (const r of appiattisci(dailyGain)) {
+    const d = toIso(r.date);
+    const v = Number(r.value);
+    if (d && Number.isFinite(v)) gainPerGiorno[d] = v / 100;
   }
 
   const series = [];
@@ -146,6 +166,8 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
       balanceRet: (prevBal && prevBal !== 0) ? profit / prevBal : 0,
       profit,
       swap: swapPerGiorno[r._iso] || 0,
+      // rendimento del giorno dichiarato da Myfxbook, quando c'e'
+      gainGiorno: (r._iso in gainPerGiorno) ? gainPerGiorno[r._iso] : null,
       ge: num('growthEquity'),
       gb: num('growthBalance', 'growth', 'growthBalanceEquity')
     });
@@ -158,33 +180,68 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
      get-history non restituisce necessariamente tutto lo storico, quindi
      questa ripartizione copre solo cio' che Myfxbook consegna. Le percentuali
      sono percio' calcolate sul totale visibile, non sul profitto dichiarato. */
-  const profittoPerSimbolo = {};
+  const operazioni = [];
   for (const op of history || []) {
-    const sim = String(op.symbol || 'altro').toUpperCase();
-    profittoPerSimbolo[sim] = (profittoPerSimbolo[sim] || 0)
-      + n(op.profit) + n(op.interest) + n(op.commission);
+    const d = toIso(op.closeTime || op.openTime);
+    if (!d) continue;
+    operazioni.push({ data: d, simbolo: String(op.symbol || 'altro').toUpperCase(),
+      risultato: n(op.profit) + n(op.interest) + n(op.commission),
+      swap: n(op.interest) });
   }
 
   /* Flottante per simbolo, dalle posizioni aperte. Questa invece e' completa:
      le posizioni aperte sono tutte quelle che ci sono. */
-  let flottantePerSimbolo = null;
+  let flottantePerSimbolo = null, esposizionePerSimbolo = null;
   if (Array.isArray(posizioniAperte)) {
     flottantePerSimbolo = {};
+    esposizionePerSimbolo = {};
+    /* Il nome del campo dei lotti non e' garantito: si prende il primo che
+       esiste, compreso il caso in cui stia dentro un oggetto "sizing". */
+    /* Documentazione: nelle posizioni aperte i lotti stanno in sizing.value,
+       come STRINGA, e lo swap nel campo "swap". Il campo "interest" esiste
+       solo nello storico delle operazioni chiuse. */
+    const lottiDi = (o) => {
+      const v = Number(o.sizing && o.sizing.value);
+      if (Number.isFinite(v) && v > 0) return v;
+      for (const k of ['lots', 'volume', 'size']) {
+        const x = Number(o[k]);
+        if (Number.isFinite(x) && x > 0) return x;
+      }
+      return 0;
+    };
+    /* Ritmo di accumulo dello swap ADESSO: per ogni posizione aperta si divide
+       lo swap gia' maturato per i giorni da cui e' aperta. E' il tasso vero di
+       quelle posizioni, non una media del passato. */
+    const oggi = Date.now();
     for (const o of posizioniAperte) {
       const sim = String(o.symbol || 'altro').toUpperCase();
+      const swapPos = Number.isFinite(Number(o.swap)) ? n(o.swap) : n(o.interest);
+      const apertura = toIso(o.openTime);
+      const giorni = apertura
+        ? Math.max(1, (oggi - new Date(apertura + 'T00:00:00Z').getTime()) / 86400e3)
+        : null;
+
       flottantePerSimbolo[sim] = (flottantePerSimbolo[sim] || 0) + n(o.profit);
+      const e = esposizionePerSimbolo[sim] ||
+        (esposizionePerSimbolo[sim] = { lotti: 0, posizioni: 0, flottante: 0,
+                                        swap: 0, swapAlGiorno: 0 });
+      e.lotti += lottiDi(o);
+      e.posizioni += 1;
+      e.flottante += n(o.profit);
+      e.swap += swapPos;
+      if (giorni) e.swapAlGiorno += swapPos / giorni;
     }
   }
 
   /* Swap maturato sulle posizioni ancora aperte. Se l'endpoint non risponde
      resta null e l'interfaccia scrive "non disponibile" invece di uno zero
      che sembrerebbe un dato. */
-  let swapAperto = null, quanteAperte = null;
+  let swapAperto = null, quanteAperte = null, swapAlGiorno = null;
   if (Array.isArray(posizioniAperte)) {
     quanteAperte = posizioniAperte.length;
     // il nome del campo non e' garantito: si prende il primo che esiste
     const swapDi = (o) => {
-      for (const k of ['interest', 'swap', 'swaps', 'storage', 'rollover']) {
+      for (const k of ['swap', 'interest', 'storage', 'rollover']) {
         const v = Number(o[k]);
         if (Number.isFinite(v) && v !== 0) return v;
       }
@@ -195,6 +252,8 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
        sta riportando: e' un'assenza di dato, non uno swap pari a zero. Meglio
        dirlo che mostrare uno zero che sembra una misura. */
     swapAperto = (quanteAperte > 0 && totale === 0) ? null : totale;
+    swapAlGiorno = Object.values(esposizionePerSimbolo || {})
+      .reduce((t, e) => t + (e.swapAlGiorno || 0), 0);
   }
 
   return {
@@ -221,10 +280,14 @@ function normalize(conto, dataDaily, history, idx = 0, posizioniAperte = null) {
        sul loro sito. */
     flottante: n(conto.equity) - n(conto.balance),
     swapAperto,
+    swapAlGiorno,
     quanteAperte,
-    profittoPerSimbolo,
+    operazioni,
     flottantePerSimbolo,
+    esposizionePerSimbolo,
     primaOperazione: toIso(conto.firstTradeDate),
+    primaRilevazione: series.length ? series[0].date : null,
+    ultimaRilevazione: series.length ? series[series.length - 1].date : null,
     aggiornatoIl: toIso(conto.lastUpdateDate),
     series
   };
@@ -280,7 +343,9 @@ async function raccogli({ email, password, start, end }) {
 
     const hist = await conSessione(email, password, s => storico(s, c.id)).catch(() => []);
     const ap = await conSessione(email, password, s => aperte(s, c.id)).catch(() => null);
-    out.push(normalize(c, daily, hist, i, ap));
+    const dg = await conSessione(email, password,
+      s => guadagnoGiornaliero(s, c.id, da, a)).catch(() => null);
+    out.push(normalize(c, daily, hist, i, ap, dg));
   }
   return out;
 }
@@ -308,7 +373,17 @@ async function verifica(email, password) {
       passi.push({ passo: 'get-data-daily', esito: 'ok', intervallo: da + ' - ' + a, righe: d.length,
         prima: d[0] && d[0].date, ultima: d[d.length - 1] && d[d.length - 1].date });
       const h = await storico(s, conti[0].id);
-      passi.push({ passo: 'get-history', esito: 'ok', operazioni: (h || []).length });
+      passi.push({ passo: 'get-history', esito: 'ok', operazioni: (h || []).length,
+        nota: 'limite dichiarato: ultime 50 transazioni' });
+
+      const dg = appiattisci(await guadagnoGiornaliero(s, conti[0].id, da, a));
+      let composto = 1;
+      for (const r of dg) composto *= (1 + (Number(r.value) || 0) / 100);
+      const dichiarato = await guadagno(s, conti[0].id, da, a);
+      passi.push({ passo: 'get-daily-gain', esito: 'ok', righe: dg.length,
+        compostoQui: Math.round((composto - 1) * 100 * 100) / 100,
+        getGain: dichiarato,
+        scarto: Math.round(((composto - 1) * 100 - dichiarato) * 100) / 100 });
     }
   } catch (e) {
     passi.push({ passo: 'lettura dati', esito: 'errore', messaggio: e.message });
@@ -339,4 +414,5 @@ async function campi(email, password) {
 }
 
 export { login, listaConti, serieGiornaliera, storico, aperte,
+  guadagnoGiornaliero, guadagno,
   normalize, appiattisci, toIso, cambi, raccogli, verifica, campi, conSessione };

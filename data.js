@@ -93,6 +93,7 @@ function dimostrativi() {
       const rap = flottante(i / 620, u);                 // equity / saldo
       out.push({ date: giorno, balance: bal, balanceRet: r, profit,
                  swap: swapDie * (0.8 + u * 0.4),
+                 gainGiorno: r,
                  ge: (1 + gb / 100) * rap * 100 - 100, gb });
     }
     return out;
@@ -116,12 +117,22 @@ function dimostrativi() {
       flottante,
       swapAperto: Math.abs(flottante) * 0.18,
       quanteAperte: valuta === 'EUR' ? 18 : 14,
-      profittoPerSimbolo: valuta === 'EUR'
-        ? { EURUSD: profitto * 0.82, XAUUSD: profitto * 0.18 }
-        : { GBPCHF: profitto },
+      operazioni: serie.filter((_, i) => i % 9 === 0).map((p, i) => ({
+        data: p.date,
+        simbolo: valuta === 'EUR' ? (i % 4 === 0 ? 'XAUUSD' : 'EURUSD') : 'GBPCHF',
+        risultato: p.profit * 6,
+        swap: p.swap * 6
+      })),
       flottantePerSimbolo: valuta === 'EUR'
         ? { EURUSD: flottante * 0.7, XAUUSD: flottante * 0.3 }
         : { GBPCHF: flottante },
+      esposizionePerSimbolo: valuta === 'EUR'
+        ? { EURUSD: { lotti:1.26, posizioni:13, flottante:flottante*0.7, swap:1400, swapAlGiorno:9.4 },
+            XAUUSD: { lotti:0.15, posizioni:5,  flottante:flottante*0.3, swap:300,  swapAlGiorno:-2.1 } }
+        : { GBPCHF: { lotti:0.98, posizioni:14, flottante, swap:5189, swapAlGiorno:12.85 } },
+      swapAlGiorno: valuta === 'EUR' ? 7.3 : 12.85,
+      primaRilevazione: serie[0].date,
+      ultimaRilevazione: serie[serie.length-1].date,
       gainPct: u.gb, absGainPct: u.gb * 0.68,
       equityPct: rapporto * 100,
       drawdownPct: valuta === 'EUR' ? 49.17 : 40.39,

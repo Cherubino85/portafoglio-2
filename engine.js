@@ -57,7 +57,7 @@ function compound(rets) {
  */
 function suAsse(dates, account, mappa) {
   const m = mappa || new Map(account.series.map(p => [p.date, p]));
-  const bal = [], ret = [], swap = [], ge = [], gb = [], profit = [];
+  const bal = [], ret = [], swap = [], ge = [], gb = [], profit = [], gain = [];
   let ultimoBal = 0, ultimoGe = null, ultimoGb = null;
   for (const d of dates) {
     const p = m.get(d);
@@ -69,6 +69,7 @@ function suAsse(dates, account, mappa) {
     bal.push(ultimoBal);
     profit.push(p ? (Number(p.profit) || 0) : 0);
     ret.push(p ? p.balanceRet : 0);
+    gain.push(p && p.gainGiorno != null ? p.gainGiorno : null);
     swap.push(p ? (p.swap || 0) : 0);
     ge.push(ultimoGe);
     gb.push(ultimoGb);
@@ -91,11 +92,20 @@ function suAsse(dates, account, mappa) {
     if (!Number.isFinite(r) || r < -0.5 || r > 1) { anomalie++; return 0; }
     return r;
   });
-  const retSaldo = passo(gb, ret);
+  /* Il rendimento del giorno viene, in ordine di preferenza:
+     1. dal guadagno giornaliero DICHIARATO da Myfxbook (get-daily-gain)
+     2. dal rapporto fra due cumulate, se esistono
+     3. dal profit sul saldo del giorno prima
+     Con la prima fonte la curva coincide con la loro e non c'e' piu' niente
+     da ricostruire — ed e' per questo che i salti anomali spariscono. */
+  const derivato = passo(gb, ret);
+  const retSaldo = gain.map((g, i) => g != null ? g : derivato[i]);
   const retEquity = passo(ge, retSaldo);
-  return { bal, ret, swap, ge, gb, profit, retSaldo, retEquity, anomalie,
+  const dichiarati = gain.filter(v => v != null).length;
+  return { bal, ret, swap, ge, gb, gain, profit, retSaldo, retEquity, anomalie,
            cum: compound(retSaldo),
-           dichiarata: gb.some(v => v != null) };
+           dichiarati,
+           dichiarata: dichiarati > 0 };
 }
 
 /**
@@ -223,11 +233,32 @@ function buildHome(accounts, opts = {}) {
   statistiche.profittoPeriodo = round2(parti.reduce((t, p) =>
     t + toEur(p.c.profit.reduce((x, y) => x + y, 0), p.a.currency), 0));
 
+  const primo = dates[0], ultimo_g = dates[dates.length - 1];
+  const nellaFinestra = (d) => d >= primo && d <= ultimo_g;
+
+  /* Profitto per simbolo e swap incassato: SOLO le operazioni chiuse dentro
+     la finestra. Prima si sommava tutto lo storico, e quei due numeri erano
+     gli unici a non rispettare il filtro. */
+  const profittoSimbolo = {}, swapSimbolo = {};
+  let swapFinestra = 0, operazioniFinestra = 0;
+  for (const p of parti)
+    for (const op of (p.a.operazioni || []))
+      if (nellaFinestra(op.data)) {
+        profittoSimbolo[op.simbolo] =
+          (profittoSimbolo[op.simbolo] || 0) + toEur(op.risultato, p.a.currency);
+        swapSimbolo[op.simbolo] =
+          (swapSimbolo[op.simbolo] || 0) + toEur(op.swap, p.a.currency);
+        swapFinestra += toEur(op.swap, p.a.currency);
+        operazioniFinestra++;
+      }
+
   /* Ripartizione per simbolo, convertita in euro e ordinata per peso. */
-  const perSimbolo = (campo) => {
-    if (parti.some(p => !p.a[campo])) return null;
+  const perSimbolo = (campo, diretto) => {
+    const sorgente = diretto || null;
+    if (!sorgente && parti.some(p => !p.a[campo])) return null;
     const m = {};
-    for (const p of parti)
+    if (sorgente) Object.assign(m, sorgente);
+    else for (const p of parti)
       for (const [sim, v] of Object.entries(p.a[campo] || {}))
         m[sim] = (m[sim] || 0) + toEur(v, p.a.currency);
     const voci = Object.entries(m)
@@ -238,8 +269,56 @@ function buildHome(accounts, opts = {}) {
     return voci.map(v => Object.assign(v,
       { pct: tot > 0 ? round2(Math.abs(v.valore) / tot * 100) : 0 }));
   };
-  statistiche.profittoPerSimbolo = perSimbolo('profittoPerSimbolo');
+  statistiche.profittoPerSimbolo = perSimbolo(null, profittoSimbolo);
   statistiche.flottantePerSimbolo = perSimbolo('flottantePerSimbolo');
+
+  /* Swap incassato nella finestra, e media giornaliera sui giorni di
+     calendario coperti dal periodo scelto. */
+  statistiche.operazioniChiuse = operazioniFinestra;
+  statistiche.giorniFinestra = Math.max(1,
+    Math.round((new Date(ultimo_g) - new Date(primo)) / 86400e3) + 1);
+
+  /* Swap incassato nel periodo.
+   * Se la finestra copre tutta la storia dei conti, il totale giusto e' quello
+   * DICHIARATO da Myfxbook: e' completo. Lo storico operazioni che l'API
+   * restituisce e' invece parziale, e sommarlo darebbe un numero piu' basso
+   * del vero. Su finestre piu' strette il dichiarato non e' scomponibile e
+   * resta solo la somma delle operazioni disponibili: si dice quante sono. */
+  const interaSuTutti = parti.every(p =>
+    (!p.a.primaRilevazione || primo <= p.a.primaRilevazione) &&
+    (!p.a.ultimaRilevazione || ultimo_g >= p.a.ultimaRilevazione));
+  statistiche.finestraIntera = interaSuTutti;
+  statistiche.swapDichiarato = somma('interest');
+  statistiche.swapFinestra = round2(swapFinestra);
+  statistiche.swapIncassato = interaSuTutti ? statistiche.swapDichiarato
+                                            : round2(swapFinestra);
+  statistiche.swapFonte = interaSuTutti ? 'dichiarato da Myfxbook'
+    : operazioniFinestra + ' operazioni chiuse nel periodo';
+
+  /* Swap giornaliero: quanto maturano OGGI le posizioni aperte, non la media
+     di quello che e' successo prima. */
+  const senzaRitmo = parti.some(p => p.a.swapAlGiorno == null);
+  statistiche.swapGiornaliero = senzaRitmo ? null
+    : round2(parti.reduce((t, p) => t + toEur(p.a.swapAlGiorno, p.a.currency), 0));
+
+  /* Esposizione per simbolo sulle posizioni aperte: e' una fotografia di
+     adesso, non un dato di periodo, e va detto. */
+  const espo = {};
+  let mancante = false;
+  for (const p of parti) {
+    if (!p.a.esposizionePerSimbolo) { mancante = true; continue; }
+    for (const [sim, v] of Object.entries(p.a.esposizionePerSimbolo)) {
+      const e = espo[sim] || (espo[sim] = { lotti: 0, posizioni: 0, flottante: 0, swap: 0 });
+      e.lotti += Number(v.lotti) || 0;
+      e.posizioni += Number(v.posizioni) || 0;
+      e.flottante += toEur(v.flottante, p.a.currency);
+      e.swap += toEur(v.swap, p.a.currency);
+    }
+  }
+  statistiche.esposizione = mancante ? null : Object.entries(espo)
+    .map(([simbolo, v]) => ({ simbolo, lotti: round2(v.lotti), posizioni: v.posizioni,
+      flottante: round2(v.flottante), swap: round2(v.swap) }))
+    .sort((a, b) => b.lotti - a.lotti);
 
   statistiche.flottantePct = statistiche.saldo > 0
     ? round2(statistiche.flottante / statistiche.saldo * 100) : 0;
@@ -259,8 +338,9 @@ function buildHome(accounts, opts = {}) {
   /* ---- controlli di coerenza, esposti invece che nascosti ---- */
   const controlli = {
     baseCurve: parti.every(p => p.c.dichiarata)
-      ? 'curve dichiarate da Myfxbook'
-      : 'crescita del saldo composta dai rendimenti giornalieri',
+      ? 'guadagno giornaliero dichiarato da Myfxbook'
+      : 'in parte ricostruita dai profitti giornalieri',
+    giorniDichiarati: parti.reduce((t, p) => t + (p.c.dichiarati || 0), 0),
     passiAnomaliIgnorati: parti.reduce((t, p) => t + (p.c.anomalie || 0), 0),
     swapDaOperazioniChiuse: round2(swapEur),
     swapDichiarato: statistiche.swap,
@@ -361,6 +441,12 @@ function buildAccount(account, opts = {}) {
       quanteAperte: account.quanteAperte,
       profittoPerSimbolo: h.statistiche.profittoPerSimbolo,
       flottantePerSimbolo: h.statistiche.flottantePerSimbolo,
+      esposizione: h.statistiche.esposizione,
+      swapIncassato: h.statistiche.swapIncassato,
+      swapFonte: h.statistiche.swapFonte,
+      swapGiornaliero: h.statistiche.swapGiornaliero,
+      giorniFinestra: h.statistiche.giorniFinestra,
+      operazioniChiuse: h.statistiche.operazioniChiuse,
       primaOperazione: account.primaOperazione || null
     },
     swapValuta,
