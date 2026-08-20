@@ -419,14 +419,18 @@ function buildHome(accounts, opts = {}) {
     controlli,
     accounts: parti.map(p => {
       const eqEur = toEur(p.a.equity != null ? p.a.equity : p.a.balance, p.a.currency);
-      const totEur = parti.reduce((t, q) =>
-        t + toEur(q.a.equity != null ? q.a.equity : q.a.balance, q.a.currency), 0) || 1;
+      /* La quota si misura sui SALDI: e' il capitale messo su ogni conto.
+         Misurarla sulle equity la fa oscillare col flottante, che e' un'altra
+         cosa e ha una scheda sua. */
+      const balEur = toEur(p.a.balance, p.a.currency);
+      const totEur = parti.reduce((t, q) => t + toEur(q.a.balance, q.a.currency), 0) || 1;
       return {
         id: p.a.id, name: p.a.name, currency: p.a.currency,
         balance: round2(p.a.balance),
         equity: round2(p.a.equity != null ? p.a.equity : p.a.balance),
         equityEur: round2(eqEur),
-        quota: round2(eqEur / totEur * 100),
+        balanceEur: round2(balEur),
+        quota: round2(balEur / totEur * 100),
         gainPct: round2((p.c.cum[ultimo] - 1) * 100),
         gainTotalePct: round2(Number(p.a.gainPct) || 0),
         absGainPct: round2(Number(p.a.absGainPct) || 0),
