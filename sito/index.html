@@ -234,7 +234,7 @@ const INIZIO_STRATEGIA = '2023-01-01';
    Resta salvato solo l'occultamento del capitale, che e' una preferenza di
    riservatezza e non cambia il significato di nessun numero. */
 const K = { capitale:'pf:capitale' };
-const VERSIONE = '2026-08-20d';
+const VERSIONE = '2026-08-21';
 const leggi = (k,d) => { try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(_){ return d; } };
 const scrivi = (k,v) => { try{ localStorage.setItem(k,v); }catch(_){} };
 
@@ -367,15 +367,19 @@ function disegna(){
   const st = d.statistiche || {};
   const c = dettaglio ? d.account : null;
   const v = dettaglio ? {
-    profitto: c.profittoPeriodo, saldo: c.balance, equity: c.equity,
+    profitto: c.profit, absGain: c.absGainPct,
+    versamenti: c.deposits, prelievi: c.withdrawals,
+    saldo: c.balance, equity: c.equity,
     equitySuSaldo: c.equityPct, drawdown: d.maxDrawdownPct,
     flottante: c.flottante, flottantePct: c.flottantePct,
-    swap: c.swapIncassato, swapFonte: c.swapFonte,
+    swap: c.interest, swapFonte: 'totale, da Myfxbook',
     swapAperto: c.swapAperto, swapApertoPct: c.swapApertoPct,
     aperte: c.quanteAperte, swapGiorno: c.swapGiornaliero
   } : {
-    profitto: st.profittoPeriodo, saldo: st.saldo, equity: st.equity,
-    equitySuSaldo: st.saldo > 0 ? st.equity / st.saldo * 100 : 0,
+    profitto: st.profitto, absGain: st.absGainPct,
+    versamenti: st.versamenti, prelievi: st.prelievi,
+    saldo: st.saldo, equity: st.equity,
+    equitySuSaldo: st.equitySuSaldoPct,
     drawdown: d.maxDrawdownPct,
     flottante: st.flottante, flottantePct: st.flottantePct,
     swap: st.swapIncassato, swapFonte: st.swapFonte,
@@ -385,12 +389,14 @@ function disegna(){
 
   $('kpi').innerHTML = [
     '<div class="gruppo">Risultato</div>',
-    card('Rendimento', pct(d.gainPct), soldi(v.profitto,cur), segno(d.gainPct),
-         'crescita del saldo · realizzato nel periodo'),
+    card('Rendimento', pct(d.gainPct), '', segno(d.gainPct),
+         'crescita del saldo nel periodo scelto'),
+    card('Rendimento assoluto', pct(v.absGain), soldi(v.profitto,cur), segno(v.absGain),
+         'profitto sui versamenti · totale, da Myfxbook'),
     card('Equity', pct(d.equityGainPct), soldi(v.equity,cur), segno(d.equityGainPct),
-         'crescita dell\'equity · vale il '+nf(2).format(v.equitySuSaldo)+'% del saldo'),
+         'crescita nel periodo · a oggi vale il '+nf(2).format(v.equitySuSaldo)+'% del saldo'),
     card('Saldo', soldi(v.saldo,cur), '', '',
-         'a oggi' + (dettaglio ? '' : ', somma dei conti ai cambi BCE')),
+         'a oggi' + (dettaglio ? ', da Myfxbook' : ', somma dei conti ai cambi BCE')),
 
     '<div class="gruppo">Rischio</div>',
     card('Drawdown massimo', '−'+nf(2).format(Math.abs(v.drawdown))+'%', '', 'giu',
@@ -401,7 +407,7 @@ function disegna(){
     '<div class="gruppo">Swap</div>',
     card('Swap incassato', soldi(v.swap,cur),
          v.profitto ? pct(v.swap/v.profitto*100) : '', 'su',
-         'del profitto · ' + (v.swapFonte || 'nel periodo')),
+         'del profitto · totale, da Myfxbook'),
     card('Swap giornaliero',
          v.swapGiorno == null ? '—' : soldiFini(v.swapGiorno,cur), '',
          v.swapGiorno < 0 ? 'giu' : 'su',
